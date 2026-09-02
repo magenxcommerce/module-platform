@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/magenxcommerce/module-platform/compare/v1.0.0...v1.0.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* inject the concrete filesystem driver, not DriverInterface ([#3](https://github.com/magenxcommerce/module-platform/issues/3)) ([00a6557](https://github.com/magenxcommerce/module-platform/commit/00a65577b48fdc0bc44d9be42e50e6998e237936))
+
 ## 1.0.0 (2026-09-02)
 
 
