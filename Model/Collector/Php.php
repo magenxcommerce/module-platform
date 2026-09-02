@@ -16,7 +16,7 @@ use Magenx\Platform\Model\Metric\ResultFactory;
 use Magenx\Platform\Model\Metric\Status;
 use Magento\Framework\App\Filesystem\DirectoryList;
 use Magento\Framework\Exception\FileSystemException;
-use Magento\Framework\Filesystem\DriverInterface;
+use Magento\Framework\Filesystem\Driver\File as FileDriver;
 use Magento\Framework\Serialize\Serializer\Json;
 
 /**
@@ -51,7 +51,7 @@ class Php implements CollectorInterface
 
     private DirectoryList $directoryList;
 
-    private DriverInterface $filesystemDriver;
+    private FileDriver $filesystemDriver;
 
     private ResultFactory $resultFactory;
 
@@ -64,7 +64,7 @@ class Php implements CollectorInterface
      * @param Config $config
      * @param Json $json
      * @param DirectoryList $directoryList
-     * @param DriverInterface $filesystemDriver
+     * @param FileDriver $filesystemDriver
      * @param ResultFactory $resultFactory
      * @param Formatter $formatter
      * @param Status $status
@@ -74,7 +74,7 @@ class Php implements CollectorInterface
         Config $config,
         Json $json,
         DirectoryList $directoryList,
-        DriverInterface $filesystemDriver,
+        FileDriver $filesystemDriver,
         ResultFactory $resultFactory,
         Formatter $formatter,
         Status $status
@@ -369,6 +369,11 @@ class Php implements CollectorInterface
         // a path that is not and the Magento standard rules out silencing it
         // with @. The check goes through the filesystem driver, which is what
         // the standard wants in place of the plain directory-test function.
+        //
+        // Typed as the concrete Driver\File, NOT DriverInterface: Magento
+        // declares no DI preference for that interface, so asking for it makes
+        // the object manager throw "Cannot instantiate interface" the moment
+        // this collector is constructed.
         try {
             if (!$this->filesystemDriver->isDirectory($path)) {
                 return;
