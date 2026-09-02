@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/magenxcommerce/module-platform/compare/v1.0.2...v1.0.3) (2026-09-02)
+
+
+### Bug Fixes
+
+* read the search password as stored and accept credentials in the host ([#7](https://github.com/magenxcommerce/module-platform/issues/7)) ([175ba8e](https://github.com/magenxcommerce/module-platform/commit/175ba8e351cc04f04f0edc84c65843a518b81c15))
+
 ## [1.0.2](https://github.com/magenxcommerce/module-platform/compare/v1.0.1...v1.0.2) (2026-09-02)
 
 
