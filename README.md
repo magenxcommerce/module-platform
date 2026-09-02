@@ -114,12 +114,17 @@ bin/magento cache:flush
   `Zend OPcache`, and `extension_loaded('opcache')` is therefore `false` on a server that
   very much has it. The PHP tab checks every name PHP might have registered, so it no
   longer reports OPcache missing on a healthy box.
-- **A search password is not always encrypted.** Saved through the admin form it goes
-  through the `Encrypted` backend model; locked into `app/etc/env.php` by deployment
-  tooling it is stored in clear, and `decrypt()` answers an empty string for it. The
-  OpenSearch collector falls back to the raw value when decryption yields nothing, and
-  prints the resolved username on the tab so an auth mismatch is visible rather than
-  showing up as a bare 401.
+- **A search password is usually not encrypted.** Saved through the admin form it goes
+  through the `Encrypted` backend model; written straight into `core_config_data` or
+  locked into `app/etc/env.php` by deployment tooling — the normal case on this stack —
+  it is stored in clear, and `decrypt()` answers an empty string for it. The collector
+  decides by shape: only a value matching `<keyVersion>:<cryptVersion>:<payload>` is
+  decrypted, so a plaintext password survives even when it contains a colon.
+- **Credentials may live in the host setting.** A docker-compose stack commonly configures
+  the search host as `http://user:password@opensearch`. The collector splits those off,
+  uses them when no `_username` / `_password` pair is configured, and keeps them out of
+  the endpoint URL it renders — a URL row is not a place to publish a password. The tab
+  names the resolved user and where it came from, never the password.
 
 ## Caveats
 

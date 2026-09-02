@@ -100,16 +100,28 @@ class OpenSearch implements CollectorInterface
                 ->setSummary('The catalog search engine is not an OpenSearch or Elasticsearch cluster.');
         }
 
-        $host = (string) $this->engineConfig($engine, 'server_hostname');
-        if ($host === '') {
+        $configuredHost = (string) $this->engineConfig($engine, 'server_hostname');
+        if ($configuredHost === '') {
             return $result->setStatus(Status::UNAVAILABLE)
                 ->setSummary(sprintf('No host is configured for the "%s" search engine.', $engine));
         }
 
+        // A docker-compose stack commonly carries the credentials in the host
+        // setting itself — http://user:password@opensearch — so split them off
+        // before anything else. $base must never carry them: it is rendered on
+        // the tab, and a URL row is not a place to publish a password.
+        [$host, $inlineUser, $inlinePassword] = $this->splitUserInfo($configuredHost);
+
         $port = (int) $this->engineConfig($engine, 'server_port');
         $prefix = (string) $this->engineConfig($engine, 'index_prefix');
         $base = $this->buildBaseUrl($host, $port);
+
         [$user, $password] = $this->credentials($engine);
+        $credentialSource = 'Stores > Configuration > Catalog > Catalog > Catalog Search.';
+        if ($user === '' && $inlineUser !== '') {
+            [$user, $password] = [$inlineUser, $inlinePassword];
+            $credentialSource = 'Taken from the credentials embedded in the configured host name.';
+        }
 
         $result->add('Cluster', 'Configured Engine', $engine);
         $result->add('Cluster', 'Endpoint', $base);
@@ -123,8 +135,8 @@ class OpenSearch implements CollectorInterface
             $user !== '' ? sprintf('Basic, as %s', $user) : 'Disabled',
             Status::INFO,
             $user !== ''
-                ? 'Username and password come from Stores > Configuration > Catalog > Catalog > Catalog Search.'
-                : 'catalog/search/' . $engine . '_enable_auth is off, so no credentials are sent.'
+                ? $credentialSource
+                : 'No credentials are configured, so none are sent.'
         );
 
         $root = $this->getJson($base . '/', $user, $password);
@@ -348,6 +360,17 @@ class OpenSearch implements CollectorInterface
             return '';
         }
 
+        // A Magento ciphertext is "<keyVersion>:<cryptVersion>:<payload>".
+        // Anything else is stored in clear — which is the normal case here,
+        // where the value is written straight into core_config_data or locked
+        // into app/etc/env.php by deployment tooling — and handing it to
+        // decrypt() returns an empty string, i.e. authenticating as nobody.
+        // Testing the shape rather than the result also keeps a plaintext
+        // password that happens to contain a colon intact.
+        if (preg_match('/^\d+:\d+:/', $value) !== 1) {
+            return $value;
+        }
+
         try {
             $decrypted = $this->encryptor->decrypt($value);
         } catch (\Throwable $e) {
@@ -355,6 +378,23 @@ class OpenSearch implements CollectorInterface
         }
 
         return $decrypted !== '' ? $decrypted : $value;
+    }
+
+    /**
+     * Split "http://user:password@host" into the host and its credentials.
+     *
+     * @param string $host
+     * @return string[] [host without credentials, user, password]
+     */
+    private function splitUserInfo(string $host): array
+    {
+        if (preg_match('#^(https?://)?([^/@]*)@(.+)$#i', $host, $matches) !== 1) {
+            return [$host, '', ''];
+        }
+
+        $credentials = explode(':', $matches[2], 2);
+
+        return [$matches[1] . $matches[3], $credentials[0], $credentials[1] ?? ''];
     }
 
     /**
