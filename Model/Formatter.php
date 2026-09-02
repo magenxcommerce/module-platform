@@ -102,6 +102,24 @@ class Formatter
     }
 
     /**
+     * A latency, in whatever unit reads best at that magnitude.
+     *
+     * @param float $seconds
+     * @return string
+     */
+    public function seconds(float $seconds): string
+    {
+        if ($seconds >= 1.0) {
+            return sprintf('%.2f s', $seconds);
+        }
+        if ($seconds >= 0.001) {
+            return sprintf('%.1f ms', $seconds * 1000);
+        }
+
+        return sprintf('%.0f µs', $seconds * 1000000);
+    }
+
+    /**
      * "used / total (pct)" — the shape most saturation metrics want.
      *
      * @param float $used

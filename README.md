@@ -29,12 +29,18 @@ log line.
 
 | Tab | Source | The lines that matter |
 |---|---|---|
-| **MariaDB** | `ResourceConnection`, `SHOW GLOBAL STATUS` / `VARIABLES`, two bounded `information_schema` queries | Threads connected against `max_connections`; InnoDB buffer pool hit rate; connections refused because the server was full; slow queries; schema size and the five largest tables |
+| **MariaDB** | `ResourceConnection`, `SHOW GLOBAL STATUS` / `VARIABLES`, two bounded `information_schema` queries, `performance_schema` statement digests | Threads connected against `max_connections`; InnoDB buffer pool hit rate; connections refused because the server was full; slow queries; schema size and the five largest tables; the top five statements by call count and by total time |
 | **Redis** | `\Credis_Client` against each configured instance (default cache, page cache, sessions) | Memory against `maxmemory`, eviction policy, evicted keys, hit rate, key count, last background save |
 | **RabbitMQ** | HTTP management API | Node alarms, memory and disk headroom, and per-queue depth against consumer count |
-| **OpenSearch** | HTTP, engine derived from `catalog/search/engine` | Cluster colour, unassigned shards, JVM heap, node disk, and the store's own indices with doc counts |
+| **OpenSearch** | HTTP, engine derived from `catalog/search/engine` | Cluster colour, unassigned shards, JVM heap, node disk, the store's own indices with doc counts, and which credentials the search configuration resolved to |
 | **PHP / FPM** | `opcache_get_status()` and friends in-process, plus the php-fpm status page | OPcache memory and cached keys, missing extensions, FPM listen queue, `max children reached`, host load and disk |
-| **Nginx** | `stub_status` | Active connections, dropped connections, requests per connection, worker read/write/wait state |
+| **Nginx** | `stub_status` | Active connections, dropped connections, requests per connection, worker read/write/wait state. The endpoint URL rides in the tab's summary line rather than a card of its own |
+
+The two statement-digest sections answer the questions a slow database actually raises —
+what runs most often, and what burns the most total time, which are usually different
+statements. Both are best-effort: `performance_schema` can be off, and the Magento database
+user is often not granted `SELECT` on it. Either way the tab says so in a note instead of
+going red, since neither is a fault of the stack.
 
 Two readings are worth calling out because they are commonly misread:
 
@@ -101,6 +107,19 @@ bin/magento setup:upgrade
 bin/magento setup:di:compile
 bin/magento cache:flush
 ```
+
+## Two things that bite when reading these values
+
+- **Extension names are not the names you type.** OPcache registers itself as
+  `Zend OPcache`, and `extension_loaded('opcache')` is therefore `false` on a server that
+  very much has it. The PHP tab checks every name PHP might have registered, so it no
+  longer reports OPcache missing on a healthy box.
+- **A search password is not always encrypted.** Saved through the admin form it goes
+  through the `Encrypted` backend model; locked into `app/etc/env.php` by deployment
+  tooling it is stored in clear, and `decrypt()` answers an empty string for it. The
+  OpenSearch collector falls back to the raw value when decryption yields nothing, and
+  prints the resolved username on the tab so an auth mismatch is visible rather than
+  showing up as a bare 401.
 
 ## Caveats
 

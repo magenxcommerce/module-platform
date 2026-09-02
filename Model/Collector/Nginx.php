@@ -76,22 +76,28 @@ class Nginx implements CollectorInterface
             );
         }
 
-        $result->add('Endpoint', 'Status URL', $url);
-
+        // The endpoint URL rides in the summary line rather than in a card of
+        // its own: a one-row card for a value the admin typed into config is
+        // furniture, not a metric.
         $body = $this->fetcher->fetch($url);
         if ($body === null) {
             return $result->setStatus(Status::UNAVAILABLE)
-                ->setSummary(sprintf('The status endpoint did not answer (%s).', $this->fetcher->getLastError()));
+                ->setSummary(sprintf('%s did not answer (%s).', $url, $this->fetcher->getLastError()));
         }
 
         $stats = $this->parse($body);
         if ($stats === null) {
             return $result->setStatus(Status::UNAVAILABLE)->setSummary(
-                'The endpoint answered, but not with stub_status output. Check that the location uses "stub_status;".'
+                sprintf(
+                    '%s answered, but not with stub_status output. Check that the location uses "stub_status;".',
+                    $url
+                )
             );
         }
 
-        $result->setSummary(sprintf('%s active connections', $this->formatter->number($stats['active'])));
+        $result->setSummary(
+            sprintf('%s active connections — %s', $this->formatter->number($stats['active']), $url)
+        );
         $this->addRows($result, $stats);
 
         return $result;

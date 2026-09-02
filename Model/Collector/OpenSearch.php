@@ -114,6 +114,18 @@ class OpenSearch implements CollectorInterface
         $result->add('Cluster', 'Configured Engine', $engine);
         $result->add('Cluster', 'Endpoint', $base);
         $result->add('Cluster', 'Index Prefix', $prefix !== '' ? $prefix : 'n/a');
+        // Say out loud which credentials were resolved from the search
+        // configuration. An auth mismatch otherwise shows up only as a bare
+        // 401 with no way to tell whether the module even read the settings.
+        $result->add(
+            'Cluster',
+            'Authentication',
+            $user !== '' ? sprintf('Basic, as %s', $user) : 'Disabled',
+            Status::INFO,
+            $user !== ''
+                ? 'Username and password come from Stores > Configuration > Catalog > Catalog > Catalog Search.'
+                : 'catalog/search/' . $engine . '_enable_auth is off, so no credentials are sent.'
+        );
 
         $root = $this->getJson($base . '/', $user, $password);
         if ($root === null) {
@@ -311,10 +323,38 @@ class OpenSearch implements CollectorInterface
             return ['', ''];
         }
 
-        $user = $this->engineConfig($engine, 'username');
-        $password = $this->engineConfig($engine, 'password');
+        return [
+            $this->engineConfig($engine, 'username'),
+            $this->readSecret($this->engineConfig($engine, 'password')),
+        ];
+    }
 
-        return [$user, $password !== '' ? $this->encryptor->decrypt($password) : ''];
+    /**
+     * Read a config value that is normally encrypted, but is not always.
+     *
+     * A password saved through the admin form goes through the Encrypted
+     * backend model and must be decrypted. The same path locked into
+     * app/etc/env.php by deployment tooling is stored in clear, and
+     * decrypt() answers an empty string for it — which authenticates as
+     * nobody and looks exactly like the module ignoring the settings. So
+     * fall back to the raw value whenever decryption yields nothing.
+     *
+     * @param string $value
+     * @return string
+     */
+    private function readSecret(string $value): string
+    {
+        if ($value === '') {
+            return '';
+        }
+
+        try {
+            $decrypted = $this->encryptor->decrypt($value);
+        } catch (\Throwable $e) {
+            $decrypted = '';
+        }
+
+        return $decrypted !== '' ? $decrypted : $value;
     }
 
     /**
@@ -324,17 +364,27 @@ class OpenSearch implements CollectorInterface
      */
     private function buildBaseUrl(string $host, int $port): string
     {
-        // The search configuration has no scheme field, so infer it: 443 and
-        // 9243 (Elastic Cloud) are TLS by convention, everything else is plain.
-        if (preg_match('#^https?://#i', $host) === 1) {
-            $base = rtrim($host, '/');
-
-            return $port > 0 && !preg_match('#:\d+$#', $base) ? $base . ':' . $port : $base;
+        // There is no scheme field in the search configuration: Magento's own
+        // client takes the scheme from the hostname when the admin typed one
+        // there, and defaults to http otherwise. Match that exactly, or this
+        // tab reports a cluster unreachable that Magento talks to happily.
+        $scheme = 'http';
+        if (preg_match('#^(https?)://#i', $host, $matches) === 1) {
+            $scheme = strtolower($matches[1]);
+        } elseif (in_array($port, [443, 9243], true)) {
+            // No scheme given, but a port that is only ever TLS in practice.
+            $scheme = 'https';
         }
 
-        $scheme = in_array($port, [443, 9243], true) ? 'https' : 'http';
+        $host = rtrim((string) preg_replace('#^https?://#i', '', $host), '/');
 
-        return $port > 0 ? sprintf('%s://%s:%d', $scheme, $host, $port) : sprintf('%s://%s', $scheme, $host);
+        // A port already written into the hostname wins over the port field,
+        // which is what Magento's own string concatenation ends up doing.
+        if (preg_match('#:\d+$#', $host) === 1 || $port <= 0) {
+            return sprintf('%s://%s', $scheme, $host);
+        }
+
+        return sprintf('%s://%s:%d', $scheme, $host, $port);
     }
 
     /**

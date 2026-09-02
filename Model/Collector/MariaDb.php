@@ -36,6 +36,11 @@ class MariaDb implements CollectorInterface
 
     private const LARGEST_TABLES = 5;
 
+    private const TOP_QUERIES = 5;
+
+    /** Digests are long; a row label has to stay readable. */
+    private const DIGEST_LABEL_LENGTH = 110;
+
     private ResourceConnection $resource;
 
     private DeploymentConfig $deploymentConfig;
@@ -96,6 +101,7 @@ class MariaDb implements CollectorInterface
         $this->addInnoDbRows($result, $globalStatus, $variables);
         $this->addQueryRows($result, $globalStatus, $variables);
         $this->addStorageRows($result, $connection, $schema);
+        $this->addQueryDigestRows($result, $connection, $variables);
 
         return $result;
     }
@@ -286,5 +292,110 @@ class MariaDb implements CollectorInterface
         foreach ($largest as $table => $size) {
             $result->add($section, (string) $table, $this->formatter->bytes($size));
         }
+    }
+
+    /**
+     * Which statements actually dominate this server, from performance_schema.
+     *
+     * These are the two questions worth asking of a slow database — what runs
+     * most often, and what burns the most total time — and they are usually
+     * different statements. Both are best-effort: performance_schema can be
+     * compiled out or switched off, and the Magento database user is often
+     * not granted SELECT on it, so every failure here is reported as a note
+     * rather than allowed to redden the tab.
+     *
+     * @param Result $result
+     * @param \Magento\Framework\DB\Adapter\AdapterInterface $connection
+     * @param array $variables
+     * @return void
+     */
+    private function addQueryDigestRows(Result $result, $connection, array $variables): void
+    {
+        $section = 'Top Queries';
+
+        if (($variables['performance_schema'] ?? 'OFF') !== 'ON') {
+            $result->add(
+                $section,
+                'performance_schema',
+                'Off',
+                Status::INFO,
+                'Statement digests need performance_schema=ON in the server configuration. It is a restart to enable.'
+            );
+
+            return;
+        }
+
+        try {
+            $byCount = $connection->fetchAll(
+                'SELECT DIGEST_TEXT, COUNT_STAR, AVG_TIMER_WAIT / 1000000000000 AS avg_time_sec '
+                . 'FROM performance_schema.events_statements_summary_by_digest '
+                . 'WHERE SCHEMA_NAME IS NOT NULL '
+                . 'ORDER BY COUNT_STAR DESC LIMIT ' . self::TOP_QUERIES
+            );
+            $byTime = $connection->fetchAll(
+                'SELECT DIGEST_TEXT, SUM_TIMER_WAIT / 1000000000000 AS total_time_sec, COUNT_STAR '
+                . 'FROM performance_schema.events_statements_summary_by_digest '
+                . 'WHERE SCHEMA_NAME IS NOT NULL '
+                . 'ORDER BY SUM_TIMER_WAIT DESC LIMIT ' . self::TOP_QUERIES
+            );
+        } catch (\Throwable $e) {
+            $result->add(
+                $section,
+                'performance_schema',
+                'No access',
+                Status::INFO,
+                'The Magento database user needs SELECT on performance_schema to read statement digests.'
+            );
+
+            return;
+        }
+
+        foreach ($byCount as $row) {
+            $result->add(
+                'Top Queries by Count',
+                $this->summarizeDigest($row['DIGEST_TEXT'] ?? null),
+                sprintf(
+                    '%s calls, %s avg',
+                    $this->formatter->number($row['COUNT_STAR'] ?? 0),
+                    $this->formatter->seconds((float) ($row['avg_time_sec'] ?? 0))
+                ),
+                Status::INFO,
+                'Counted since the digest table was last reset, across every schema on this server.'
+            );
+        }
+
+        foreach ($byTime as $row) {
+            $result->add(
+                'Top Queries by Total Time',
+                $this->summarizeDigest($row['DIGEST_TEXT'] ?? null),
+                sprintf(
+                    '%s total, %s calls',
+                    $this->formatter->seconds((float) ($row['total_time_sec'] ?? 0)),
+                    $this->formatter->number($row['COUNT_STAR'] ?? 0)
+                ),
+                Status::INFO,
+                'Total time is what a tuning session should start from, not the slowest single execution.'
+            );
+        }
+    }
+
+    /**
+     * Squeeze a normalized statement onto one readable line.
+     *
+     * @param string|null $digest
+     * @return string
+     */
+    private function summarizeDigest(?string $digest): string
+    {
+        $digest = trim((string) preg_replace('/\s+/', ' ', (string) $digest));
+        if ($digest === '') {
+            return '(unknown statement)';
+        }
+
+        if (mb_strlen($digest) <= self::DIGEST_LABEL_LENGTH) {
+            return $digest;
+        }
+
+        return mb_substr($digest, 0, self::DIGEST_LABEL_LENGTH - 1) . '…';
     }
 }

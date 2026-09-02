@@ -41,7 +41,24 @@ class Php implements CollectorInterface
     private const DISK_USED_ERROR_PCT = 90.0;
 
     /** Extensions this stack actually depends on being present. */
-    private const REQUIRED_EXTENSIONS = ['opcache', 'pdo_mysql', 'intl', 'sodium', 'curl', 'sockets', 'bcmath', 'gd'];
+    /**
+     * Display name => the names PHP may have registered the extension under.
+     *
+     * OPcache is why this is a map rather than a flat list: it registers as
+     * "Zend OPcache", extension_loaded() matches on the registered name, and
+     * extension_loaded('opcache') is therefore false on a server that very
+     * much has OPcache. Reporting it missing there is worse than not checking.
+     */
+    private const REQUIRED_EXTENSIONS = [
+        'opcache' => ['Zend OPcache', 'opcache'],
+        'pdo_mysql' => ['pdo_mysql'],
+        'intl' => ['intl'],
+        'sodium' => ['sodium'],
+        'curl' => ['curl'],
+        'sockets' => ['sockets'],
+        'bcmath' => ['bcmath'],
+        'gd' => ['gd'],
+    ];
 
     private StatusFetcher $fetcher;
 
@@ -151,9 +168,16 @@ class Php implements CollectorInterface
     private function addExtensionRow(Result $result): void
     {
         $missing = [];
-        foreach (self::REQUIRED_EXTENSIONS as $extension) {
-            if (!extension_loaded($extension)) {
-                $missing[] = $extension;
+        foreach (self::REQUIRED_EXTENSIONS as $label => $candidates) {
+            $loaded = false;
+            foreach ($candidates as $candidate) {
+                if (extension_loaded($candidate)) {
+                    $loaded = true;
+                    break;
+                }
+            }
+            if (!$loaded) {
+                $missing[] = $label;
             }
         }
 
@@ -162,7 +186,7 @@ class Php implements CollectorInterface
             'Required Extensions',
             $missing === [] ? 'All present' : 'Missing: ' . implode(', ', $missing),
             $missing === [] ? Status::OK : Status::ERROR,
-            implode(', ', self::REQUIRED_EXTENSIONS)
+            implode(', ', array_keys(self::REQUIRED_EXTENSIONS))
         );
     }
 
