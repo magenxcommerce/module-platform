@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/magenxcommerce/module-platform/compare/v1.0.1...v1.0.2) (2026-09-02)
+
+
+### Bug Fixes
+
+* correct OPcache detection, search auth and the Nginx endpoint card ([#5](https://github.com/magenxcommerce/module-platform/issues/5)) ([ef5da8b](https://github.com/magenxcommerce/module-platform/commit/ef5da8bbe3a00ce7a4307667b2fc390b651c7d14))
+
 ## [1.0.1](https://github.com/magenxcommerce/module-platform/compare/v1.0.0...v1.0.1) (2026-09-02)
 
 
