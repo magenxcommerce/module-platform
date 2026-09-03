@@ -84,29 +84,48 @@ class PrometheusMetrics
     }
 
     /**
-     * Split one metric family by its label, keyed on the label's VALUE.
+     * Split one metric family by its label, grouped on the label's VALUE.
      *
-     * Keyed on the value rather than the name deliberately: imgproxy documents
+     * Grouped on the value rather than the name deliberately: imgproxy documents
      * these families as "separated by status" and "separated by type" without
      * formally naming the labels, and each carries exactly one — so matching on
      * the value is unambiguous here and survives the label being renamed.
      *
+     * Returns a LIST of label/value pairs rather than a label-keyed map, and
+     * that is the whole point of the shape. PHP silently casts a numeric-string
+     * array key to an integer, so a map keyed on these labels hands back int 200
+     * for status code "200" while leaving "timeout" a string — and the caller
+     * then passes an int to a string parameter and fatals on some deployments
+     * but not others, depending on which labels a backend happens to emit. A
+     * list cannot express that, so the labels stay strings by construction.
+     *
      * @param array<int, array{name: string, labels: array<string, string>, value: float}> $samples
      * @param string $name
-     * @return array<string, float>
+     * @return array<int, array{label: string, value: float}>
      */
     public function breakdown(array $samples, string $name): array
     {
-        $byLabel = [];
+        $totals = [];
         foreach ($samples as $sample) {
             if (!$this->matchesName($sample['name'], $name)) {
                 continue;
             }
             $key = implode(' ', $sample['labels']);
-            $byLabel[$key] = ($byLabel[$key] ?? 0.0) + $sample['value'];
+            $totals[$key] = ($totals[$key] ?? 0.0) + $sample['value'];
         }
 
-        return $byLabel;
+        $breakdown = [];
+        foreach ($totals as $label => $value) {
+            // (string) undoes the key cast described above. "200" survives the
+            // round trip as "200"; only canonical integer strings are coerced.
+            $breakdown[] = ['label' => (string) $label, 'value' => $value];
+        }
+
+        // Natural order, so status codes read 200/404/500 rather than in
+        // whichever order the exporter happened to emit them.
+        usort($breakdown, static fn (array $a, array $b): int => strnatcmp($a['label'], $b['label']));
+
+        return $breakdown;
     }
 
     /**

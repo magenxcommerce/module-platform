@@ -203,7 +203,7 @@ class ImgProxy implements CollectorInterface
      *
      * @param Result $result
      * @param string $section
-     * @param array<string, float> $breakdown
+     * @param array<int, array{label: string, value: float}> $breakdown
      * @param float|null $requests
      * @param string $hint
      * @return void
@@ -215,10 +215,7 @@ class ImgProxy implements CollectorInterface
         ?float $requests,
         string $hint
     ): void {
-        // Sorted so the rows do not reshuffle between refreshes.
-        ksort($breakdown);
-
-        foreach ($breakdown as $label => $count) {
+        foreach ($breakdown as ['label' => $label, 'value' => $count]) {
             if ($label === '') {
                 continue;
             }
@@ -257,9 +254,8 @@ class ImgProxy implements CollectorInterface
 
         $section = 'Status Codes';
         $requests = $this->prometheus->sum($samples, 'requests_total');
-        ksort($codes);
 
-        foreach ($codes as $code => $count) {
+        foreach ($codes as ['label' => $code, 'value' => $count]) {
             if ($code === '') {
                 continue;
             }
