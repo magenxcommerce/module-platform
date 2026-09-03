@@ -29,7 +29,7 @@ log line.
 
 | Tab | Source | The lines that matter |
 |---|---|---|
-| **MariaDB** | `ResourceConnection`, `SHOW GLOBAL STATUS` / `VARIABLES`, two bounded `information_schema` queries, `performance_schema` statement digests | Threads connected against `max_connections`; InnoDB buffer pool hit rate; connections refused because the server was full; slow queries; schema size and the five largest tables; the top five statements by call count and by total time |
+| **MariaDB** | `ResourceConnection`, `SHOW GLOBAL STATUS` / `VARIABLES`, one `information_schema` pass, `performance_schema` statement digests | Threads connected against `max_connections`; InnoDB buffer pool hit rate; connections refused because the server was full; slow queries; schema size and the five largest tables; the top five statements by call count and by total time |
 | **Redis** | `\Credis_Client` against each configured instance (default cache, page cache, sessions) | Memory against `maxmemory`, eviction policy, evicted keys, hit rate, key count, last background save |
 | **RabbitMQ** | HTTP management API | Node alarms, memory and disk headroom, and per-queue depth against consumer count |
 | **OpenSearch** | HTTP, engine derived from `catalog/search/engine` | Cluster colour, unassigned shards, JVM heap, node disk, the store's own indices with doc counts, and which credentials the search configuration resolved to |
@@ -119,20 +119,26 @@ bin/magento cache:flush
   locked into `app/etc/env.php` by deployment tooling — the normal case on this stack —
   it is stored in clear, and `decrypt()` answers an empty string for it. The collector
   decides by shape: only a value matching `<keyVersion>:<cryptVersion>:<payload>` is
-  decrypted, so a plaintext password survives even when it contains a colon.
+  decrypted, so a plaintext password survives even when it contains a colon. A ciphertext
+  that will not decrypt is never sent as the password — it would fail authentication
+  anyway, and an encrypted Magento secret has no business on the wire.
 - **Credentials may live in the host setting.** A docker-compose stack commonly configures
   the search host as `http://user:password@opensearch`. The collector splits those off,
   uses them when no `_username` / `_password` pair is configured, and keeps them out of
   the endpoint URL it renders — a URL row is not a place to publish a password. The tab
-  names the resolved user and where it came from, never the password.
+  names the resolved user and where it came from, never the password. The same applies to
+  the Nginx status URL and the RabbitMQ management URL: both are admin-entered and both are
+  rendered through `StatusFetcher::redact()`, so userinfo pasted into either never comes
+  back out on the page.
 
 ## Caveats
 
 - The dashboard is live-only. There is no history and no sparklines — trends are Grafana's
   job, and `deploy/observability/` already runs it.
-- `information_schema.TABLES` is a full scan of the table cache. The largest-tables query is
-  capped at five rows, but on a schema with many thousands of tables the MariaDB tab may
-  still time out into "unavailable" rather than block.
+- `information_schema.TABLES` is a full scan of the table cache. The schema total and the
+  five largest tables are read from a single such scan rather than two, but on a schema
+  with many thousands of tables the MariaDB tab may still time out into "unavailable"
+  rather than block.
 - The search collector derives its config path prefix from `catalog/search/engine`, so it
   works against `opensearch` and `elasticsearch7` alike. An engine of `mysql` reports the
   tab as not applicable rather than broken.

@@ -348,8 +348,9 @@ class OpenSearch implements CollectorInterface
      * backend model and must be decrypted. The same path locked into
      * app/etc/env.php by deployment tooling is stored in clear, and
      * decrypt() answers an empty string for it — which authenticates as
-     * nobody and looks exactly like the module ignoring the settings. So
-     * fall back to the raw value whenever decryption yields nothing.
+     * nobody and looks exactly like the module ignoring the settings. So the
+     * shape of the value, not the result of decrypting it, decides which of
+     * the two it is.
      *
      * @param string $value
      * @return string
@@ -377,7 +378,12 @@ class OpenSearch implements CollectorInterface
             $decrypted = '';
         }
 
-        return $decrypted !== '' ? $decrypted : $value;
+        // A ciphertext that would not decrypt is NOT sent as the password. It
+        // would fail authentication anyway, and putting an encrypted Magento
+        // secret on the wire — and into the search cluster's auth log — is
+        // strictly worse than sending nothing. The plaintext case never reaches
+        // here: it is answered by the shape test above.
+        return $decrypted;
     }
 
     /**

@@ -23,12 +23,18 @@ $tabs = $block->getTabs();
         <div class="magenx-platform-bar">
             <ul class="magenx-platform-tabs" role="tablist">
                 <?php foreach ($tabs as $index => $tab): ?>
-                    <li>
+                    <?php /* role="presentation" on the li: ARIA requires the tabs to be the
+                           tablist's own children, and a bare <li> between them breaks that
+                           relationship for a screen reader. */ ?>
+                    <li role="presentation">
                         <button type="button"
                                 class="magenx-platform-tab<?= $index === 0 ? ' _active' : '' ?>"
                                 role="tab"
+                                id="magenx-platform-tab-<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
                                 data-collector="<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
-                                aria-selected="<?= $index === 0 ? 'true' : 'false' ?>">
+                                aria-controls="magenx-platform-panel-<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
+                                aria-selected="<?= $index === 0 ? 'true' : 'false' ?>"
+                                tabindex="<?= $index === 0 ? '0' : '-1' ?>">
                             <span class="magenx-platform-dot" data-status="pending"></span>
                             <span class="magenx-platform-tab-label"><?= $escaper->escapeHtml($tab['label']) ?></span>
                         </button>
@@ -45,6 +51,9 @@ $tabs = $block->getTabs();
 
         <?php foreach ($tabs as $index => $tab): ?>
             <section class="magenx-platform-panel<?= $index === 0 ? ' _active' : '' ?>"
+                     role="tabpanel"
+                     id="magenx-platform-panel-<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
+                     aria-labelledby="magenx-platform-tab-<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
                      data-panel="<?= $escaper->escapeHtmlAttr($tab['code']) ?>">
                 <p class="magenx-platform-loading"><?= $escaper->escapeHtml(__('Loading…')) ?></p>
             </section>

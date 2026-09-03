@@ -18,11 +18,12 @@ use Magento\Framework\App\ResourceConnection;
 /**
  * MariaDB / MySQL health, over the connection Magento already holds.
  *
- * Everything here comes from SHOW GLOBAL STATUS, SHOW GLOBAL VARIABLES and two
- * bounded information_schema queries. No credential is read for this collector
- * at all — ResourceConnection hands back a live connection — and the host and
- * schema shown come from db/connection/default purely so the admin can tell
- * which database they are looking at.
+ * Everything here comes from SHOW GLOBAL STATUS, SHOW GLOBAL VARIABLES, a
+ * single information_schema pass and two performance_schema digest queries. No
+ * credential is read for this collector at all — ResourceConnection hands back
+ * a live connection — and the host and schema shown come from
+ * db/connection/default purely so the admin can tell which database they are
+ * looking at.
  */
 class MariaDb implements CollectorInterface
 {
@@ -91,7 +92,9 @@ class MariaDb implements CollectorInterface
 
         $globalStatus = $connection->fetchPairs('SHOW GLOBAL STATUS');
         $variables = $connection->fetchPairs('SHOW GLOBAL VARIABLES');
-        $version = (string) $connection->fetchOne('SELECT VERSION()');
+        // SHOW GLOBAL VARIABLES already carries the server version, so there is
+        // no SELECT VERSION() round trip to make for it.
+        $version = (string) ($variables['version'] ?? 'n/a');
         $schema = (string) $this->deploymentConfig->get('db/connection/default/dbname');
 
         $result->setSummary(sprintf('%s, up %s', $version, $this->formatter->duration($globalStatus['Uptime'] ?? 0)));
@@ -275,21 +278,23 @@ class MariaDb implements CollectorInterface
         }
 
         $section = 'Storage';
-        $total = $connection->fetchOne(
-            'SELECT SUM(data_length + index_length) FROM information_schema.TABLES WHERE table_schema = ?',
-            [$schema]
-        );
-        $result->add($section, 'Schema Size', $this->formatter->bytes($total));
 
-        // Bounded to five rows: information_schema.TABLES is a full scan of the
-        // table cache and gets expensive on a schema with thousands of tables.
-        $largest = $connection->fetchPairs(
+        // One pass, not two. Querying information_schema.TABLES opens every
+        // table in the schema to fill in the size columns, which on a Magento
+        // database of several hundred tables is the most expensive thing this
+        // collector does — so the schema total and the largest tables are read
+        // from the same scan and the total is summed here rather than by a
+        // second SUM() query over the same rows.
+        $sizes = $connection->fetchPairs(
             'SELECT table_name, data_length + index_length AS total_size '
             . 'FROM information_schema.TABLES WHERE table_schema = ? '
-            . 'ORDER BY total_size DESC LIMIT ' . self::LARGEST_TABLES,
+            . 'ORDER BY total_size DESC',
             [$schema]
         );
-        foreach ($largest as $table => $size) {
+
+        $result->add($section, 'Schema Size', $this->formatter->bytes(array_sum(array_map('floatval', $sizes))));
+
+        foreach (array_slice($sizes, 0, self::LARGEST_TABLES, true) as $table => $size) {
             $result->add($section, (string) $table, $this->formatter->bytes($size));
         }
     }

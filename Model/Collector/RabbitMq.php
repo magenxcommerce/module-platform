@@ -111,7 +111,9 @@ class RabbitMq implements CollectorInterface
 
         $result->add('Broker', 'AMQP Endpoint', sprintf('%s:%s', $amqp['host'], $amqp['port'] ?? 5672));
         $result->add('Broker', 'Virtual Host', $vhost);
-        $result->add('Broker', 'Management API', $base);
+        // Redacted: an admin may have configured the management URL with inline
+        // credentials, and this row is rendered on the tab.
+        $result->add('Broker', 'Management API', $this->fetcher->redact($base));
 
         $overview = $this->getJson($base . '/api/overview', $amqp);
         if ($overview === null) {

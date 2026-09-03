@@ -78,11 +78,16 @@ class Nginx implements CollectorInterface
 
         // The endpoint URL rides in the summary line rather than in a card of
         // its own: a one-row card for a value the admin typed into config is
-        // furniture, not a metric.
+        // furniture, not a metric. It is shown redacted, because a stub_status
+        // location behind basic auth is commonly configured as
+        // http://user:password@nginx/nginx_status and the summary line is not a
+        // place to publish that password.
+        $shownUrl = $this->fetcher->redact($url);
+
         $body = $this->fetcher->fetch($url);
         if ($body === null) {
             return $result->setStatus(Status::UNAVAILABLE)
-                ->setSummary(sprintf('%s did not answer (%s).', $url, $this->fetcher->getLastError()));
+                ->setSummary(sprintf('%s did not answer (%s).', $shownUrl, $this->fetcher->getLastError()));
         }
 
         $stats = $this->parse($body);
@@ -90,13 +95,13 @@ class Nginx implements CollectorInterface
             return $result->setStatus(Status::UNAVAILABLE)->setSummary(
                 sprintf(
                     '%s answered, but not with stub_status output. Check that the location uses "stub_status;".',
-                    $url
+                    $shownUrl
                 )
             );
         }
 
         $result->setSummary(
-            sprintf('%s active connections — %s', $this->formatter->number($stats['active']), $url)
+            sprintf('%s active connections — %s', $this->formatter->number($stats['active']), $shownUrl)
         );
         $this->addRows($result, $stats);
 

@@ -30,6 +30,11 @@ class Overview extends Template
     private Json $json;
 
     /**
+     * @var array|null
+     */
+    private ?array $tabs = null;
+
+    /**
      * @param Context $context
      * @param CollectorPool $pool
      * @param Config $config
@@ -62,6 +67,13 @@ class Overview extends Template
      */
     public function getTabs(): array
     {
+        // Memoized: the template asks for the tabs to render the strip, and
+        // getJsInit() asks again for the same list, and each entry costs a
+        // getUrl() call that signs a backend URL with the admin secret key.
+        if ($this->tabs !== null) {
+            return $this->tabs;
+        }
+
         $enabled = $this->config->getEnabledCollectors();
         $tabs = [];
 
@@ -75,6 +87,8 @@ class Overview extends Template
                 'url' => $this->getUrl('magenx_platform/overview/metrics', ['collector' => $code]),
             ];
         }
+
+        $this->tabs = $tabs;
 
         return $tabs;
     }

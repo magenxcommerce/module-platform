@@ -308,6 +308,13 @@ class Redis implements CollectorInterface
 
         try {
             $client->connect();
+            // Credis applies the constructor timeout to the connect only. A
+            // Redis that accepts the socket and then never answers INFO — a
+            // node mid-failover, or one busy with a large BGSAVE — would
+            // otherwise hold this request open well past the configured
+            // timeout, which is the exact failure mode the timeout exists to
+            // prevent.
+            $client->setReadTimeout($this->config->getTimeout());
             $info = $client->info();
         } finally {
             // The password never leaves this method, and the socket never

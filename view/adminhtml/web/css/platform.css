@@ -160,3 +160,9 @@
 }
 
 .magenx-platform-loading { color: #8f8f8f; }
+
+.magenx-platform-panel-meta {
+    color: #8f8f8f;
+    font-size: 11px;
+    margin: 12px 0 0;
+}

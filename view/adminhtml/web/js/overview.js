@@ -10,16 +10,37 @@
  * banners, queue names and error messages that came back from services outside
  * Magento and must never be parsed as markup.
  */
-define([], function () {
+define(['mage/translate'], function ($t) {
     'use strict';
 
-    var STATUS_LABEL = {
-        ok: 'OK',
-        info: '',
-        warn: 'Attention',
-        unavailable: 'Unavailable',
-        error: 'Problem'
-    };
+    /**
+     * The badge shown next to a tab's summary line.
+     *
+     * A switch over literals rather than a lookup table, because Magento's
+     * i18n collector extracts $t('...') by scanning for the literal — a
+     * $t(variable) is invisible to it and ships untranslated.
+     *
+     * @param {String} status
+     * @returns {String}
+     */
+    function statusLabel(status) {
+        switch (status) {
+            case 'ok':
+                return $t('OK');
+
+            case 'warn':
+                return $t('Attention');
+
+            case 'unavailable':
+                return $t('Unavailable');
+
+            case 'error':
+                return $t('Problem');
+
+            default:
+                return '';
+        }
+    }
 
     /**
      * @param {String} tag
@@ -76,13 +97,47 @@ define([], function () {
     }
 
     /**
+     * When these numbers were actually measured.
+     *
+     * The collector reports its own collection time, whether the payload came
+     * back off the server-side snapshot cache, and how long the probe took —
+     * so a cached tab says so instead of borrowing the browser's clock and
+     * claiming to be current.
+     *
+     * @param {Object} payload
+     * @returns {HTMLElement|null}
+     */
+    function renderFreshness(payload) {
+        if (!payload.collected_at) {
+            return null;
+        }
+
+        if (payload.cached) {
+            return el(
+                'p',
+                'magenx-platform-panel-meta',
+                $t('Cached snapshot, collected %1').replace('%1', payload.collected_at)
+            );
+        }
+
+        return el(
+            'p',
+            'magenx-platform-panel-meta',
+            $t('Collected %1 in %2 ms')
+                .replace('%1', payload.collected_at)
+                .replace('%2', String(payload.elapsed_ms || 0))
+        );
+    }
+
+    /**
      * @param {HTMLElement} panel
      * @param {Object} payload
      */
     function renderPanel(panel, payload) {
         var summary = el('div', 'magenx-platform-summary _status-' + (payload.status || 'info')),
             grid = el('div', 'magenx-platform-grid'),
-            badge = STATUS_LABEL[payload.status] || '';
+            badge = statusLabel(payload.status),
+            freshness;
 
         panel.textContent = '';
 
@@ -96,6 +151,12 @@ define([], function () {
             grid.appendChild(renderSection(section));
         });
         panel.appendChild(grid);
+
+        freshness = renderFreshness(payload);
+
+        if (freshness) {
+            panel.appendChild(freshness);
+        }
     }
 
     /**
@@ -114,6 +175,7 @@ define([], function () {
     return function (config, element) {
         var root = element,
             meta = root.querySelector('[data-role="meta"]'),
+            inFlight = false,
             timer = null;
 
         /**
@@ -142,7 +204,7 @@ define([], function () {
             }).catch(function (error) {
                 renderPanel(panel, {
                     status: 'unavailable',
-                    summary: 'This tab could not be loaded: ' + error.message,
+                    summary: $t('This tab could not be loaded: %1').replace('%1', error.message),
                     sections: []
                 });
                 paintDot(root, tab.code, 'unavailable');
@@ -151,16 +213,36 @@ define([], function () {
 
         /**
          * Fires every tab at once — the whole point of splitting the endpoint.
+         *
+         * A run already in progress is never joined by a second one. Auto
+         * refresh and the Refresh button share this entry point, and without
+         * the guard a held-down button, or an interval shorter than the
+         * slowest backend, would stack a fresh round of probes on top of the
+         * round still waiting — turning the dashboard into the load generator
+         * the server-side snapshot cache exists to prevent.
          */
         function loadAll() {
+            if (inFlight) {
+                return Promise.resolve();
+            }
+
+            inFlight = true;
+
             if (meta) {
-                meta.textContent = 'Collecting…';
+                meta.textContent = $t('Collecting…');
             }
 
             return Promise.all((config.tabs || []).map(load)).then(function () {
+                inFlight = false;
+
                 if (meta) {
-                    meta.textContent = 'Updated ' + new Date().toLocaleTimeString();
+                    // "Fetched", not "Updated": a tab served from the snapshot
+                    // cache carries its own, older collection time, which the
+                    // panel prints under its cards.
+                    meta.textContent = $t('Fetched %1').replace('%1', new Date().toLocaleTimeString());
                 }
+            }, function () {
+                inFlight = false;
             });
         }
 
@@ -194,6 +276,7 @@ define([], function () {
 
                 node.classList.toggle('_active', active);
                 node.setAttribute('aria-selected', active ? 'true' : 'false');
+                node.setAttribute('tabindex', active ? '0' : '-1');
             });
 
             Array.prototype.forEach.call(root.querySelectorAll('.magenx-platform-panel'), function (node) {

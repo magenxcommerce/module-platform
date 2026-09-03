@@ -78,7 +78,9 @@ class StatusFetcher
             $status = $curl->getStatus();
             $body = $curl->getBody();
         } catch (\Throwable $e) {
-            $this->lastError = $e->getMessage();
+            // curl reports the URL it was given back in some of its errors, and
+            // that URL may carry userinfo, so this goes through redact() too.
+            $this->lastError = $this->redact($e->getMessage());
 
             return null;
         }
@@ -105,11 +107,17 @@ class StatusFetcher
     /**
      * Strip any userinfo before a URL goes into a message the admin will read.
      *
+     * Public because the collectors render configured endpoint URLs themselves —
+     * on a summary line or in an "Endpoint" row — and an admin who pasted
+     * http://user:password@host into configuration must not get that password
+     * back out on the page. One implementation, used by every caller that puts a
+     * URL in front of a human.
+     *
      * @param string $url
      * @return string
      */
-    private function redact(string $url): string
+    public function redact(string $url): string
     {
-        return (string) preg_replace('#://[^/@]*@#', '://', $url);
+        return (string) preg_replace('#://[^/@\s]*@#', '://', $url);
     }
 }
