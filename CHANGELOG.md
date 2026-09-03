@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.3](https://github.com/magenxcommerce/module-platform/compare/v1.1.2...v1.1.3) (2026-09-03)
+
+
+### Bug Fixes
+
+* Add comprehensive unit tests and improve cache/timeout handling ([#17](https://github.com/magenxcommerce/module-platform/issues/17)) ([ba45145](https://github.com/magenxcommerce/module-platform/commit/ba4514543363326b7945a63b408a165184c07f09))
+
 ## [1.1.2](https://github.com/magenxcommerce/module-platform/compare/v1.1.1...v1.1.2) (2026-09-03)
 
 
