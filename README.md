@@ -35,7 +35,7 @@ log line.
 | **OpenSearch** | HTTP, engine derived from `catalog/search/engine` | Cluster colour, unassigned shards, JVM heap with committed size and the young/old generation pools, old-generation GC counters, node disk, the store's own indices with doc counts, and which credentials the search configuration resolved to |
 | **PHP / FPM** | `opcache_get_status()` and friends in-process, plus the php-fpm status page | OPcache memory and cached keys, missing required extensions and missing recommended ones (`redis`, `igbinary`), FPM listen queue, `max children reached`, host load and disk |
 | **Nginx** | `stub_status` | Active connections, dropped connections, requests per connection, worker read/write/wait state. The endpoint URL rides in the tab's summary line rather than a card of its own |
-| **imgproxy** | Prometheus `/metrics` | Error rate against request count, worker utilization against `IMGPROXY_WORKERS`, and average download vs processing time — which separates a slow origin from a busy imgproxy |
+| **imgproxy** | Prometheus `/metrics` | Error rate and errors split by type, 5xx share of requests, worker utilization, the queue/downloading/processing spans — which separate a saturated imgproxy from a slow origin from an expensive image — and libvips memory against its peak |
 
 The two statement-digest sections answer the questions a slow database actually raises —
 what runs most often, and what burns the most total time, which are usually different
@@ -97,10 +97,22 @@ goroutine. OpenTelemetry **tracing** is the expensive switch — a span per requ
 unrelated to this tab. Bind the Prometheus listener to the private network; it is
 unauthenticated.
 
-Metric names shift between imgproxy versions, and `IMGPROXY_PROMETHEUS_NAMESPACE` prefixes
-them all when set. The reader matches on the name's suffix so it works either way, but if a
-row is missing, `curl` the endpoint and compare — a metric this module cannot find is
-silently skipped rather than guessed at.
+Metric names come from imgproxy's [documented list](https://docs.imgproxy.net/monitoring/prometheus).
+Two details from it shape the reader:
+
+- `IMGPROXY_PROMETHEUS_NAMESPACE` prefixes every metric when set, so lookups match on the
+  name's **suffix** and work either way without being told which was chosen.
+- `errors_total`, `status_codes_total` and `request_span_duration_seconds` are each split by
+  a label, and the docs describe those splits ("separated by type", "separated by span")
+  without formally naming the labels. The reader therefore keys breakdowns on the label's
+  **value**, not its name — these families carry one label each, so that is unambiguous and
+  survives a rename. Reading them without labels at all is worse than useless: it reports
+  one label set's count as if it were the family total.
+
+A metric this module cannot find skips its row rather than being guessed at, which is what
+carries the tab across imgproxy versions. If a row is missing, `curl` the endpoint and
+compare. Metrics are served from **any path** on the Prometheus binding, so `/metrics` is a
+convention rather than a requirement.
 
 If the RabbitMQ tab reports that the management API did not answer, enable it on the broker:
 

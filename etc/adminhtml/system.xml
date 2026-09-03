@@ -79,7 +79,7 @@
                 </field>
                 <field id="imgproxy_metrics_url" translate="label comment" type="text" sortOrder="40" showInDefault="1" canRestoreToDefault="1">
                     <label>imgproxy Metrics URL</label>
-                    <comment>URL of the imgproxy Prometheus endpoint, reachable from the PHP container. Start imgproxy with IMGPROXY_PROMETHEUS_BIND (for example ":4594") to publish it. This is a second listener and cannot share the port imgproxy serves images on, so it is not the IMGPROXY_BIND address. The OpenTelemetry metrics switch pushes to a collector instead and exposes nothing to read here. Leave empty to disable the imgproxy probe.</comment>
+                    <comment>URL of the imgproxy Prometheus endpoint, reachable from the PHP container. Start imgproxy with IMGPROXY_PROMETHEUS_BIND (for example ":4594") to publish it. This is a second listener and cannot share the port imgproxy serves images on, so it is not the IMGPROXY_BIND address. Metrics are served from any path on that binding, so the path below is a convention rather than a requirement. The OpenTelemetry metrics switch pushes to a collector instead and exposes nothing to read here. Leave empty to disable the imgproxy probe.</comment>
                     <depends><field id="enabled">1</field></depends>
                 </field>
             </group>
