@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/magenxcommerce/module-platform/compare/v1.1.0...v1.1.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* read imgproxy's real metric names, and stop discarding labels ([#13](https://github.com/magenxcommerce/module-platform/issues/13)) ([d090459](https://github.com/magenxcommerce/module-platform/commit/d090459c7f6645353631e86a8c4e9440cab85288))
+
 ## [1.1.0](https://github.com/magenxcommerce/module-platform/compare/v1.0.4...v1.1.0) (2026-09-03)
 
 
