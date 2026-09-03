@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.4](https://github.com/magenxcommerce/module-platform/compare/v1.0.3...v1.0.4) (2026-09-03)
+
+
+### Bug Fixes
+
+* Internationalize dashboard UI and improve security/performance ([#9](https://github.com/magenxcommerce/module-platform/issues/9)) ([d9545da](https://github.com/magenxcommerce/module-platform/commit/d9545dacd5eb6d7de505e954f49d381000e487d8))
+* keep configured URLs out of the page, and stop redundant probing ([d9545da](https://github.com/magenxcommerce/module-platform/commit/d9545dacd5eb6d7de505e954f49d381000e487d8))
+
 ## [1.0.3](https://github.com/magenxcommerce/module-platform/compare/v1.0.2...v1.0.3) (2026-09-02)
 
 
