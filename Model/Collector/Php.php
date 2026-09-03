@@ -40,8 +40,9 @@ class Php implements CollectorInterface
     private const DISK_USED_WARN_PCT = 80.0;
     private const DISK_USED_ERROR_PCT = 90.0;
 
-    /** Extensions this stack actually depends on being present. */
     /**
+     * Extensions this stack depends on being present.
+     *
      * Display name => the names PHP may have registered the extension under.
      *
      * OPcache is why this is a map rather than a flat list: it registers as
@@ -338,7 +339,7 @@ class Php implements CollectorInterface
 
         try {
             $fpm = $this->json->unserialize($body);
-        } catch (\InvalidArgumentException $e) {
+        } catch (\InvalidArgumentException) {
             $result->add(
                 $section,
                 'Status Page',
@@ -441,7 +442,7 @@ class Php implements CollectorInterface
             if (!$this->filesystemDriver->isDirectory($path)) {
                 return;
             }
-        } catch (FileSystemException $e) {
+        } catch (FileSystemException) {
             return;
         }
 

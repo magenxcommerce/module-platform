@@ -8,12 +8,14 @@ declare(strict_types=1);
 
 namespace Magenx\Platform\Model\Collector;
 
+use Magenx\Platform\Model\Config;
 use Magenx\Platform\Model\Formatter;
 use Magenx\Platform\Model\Metric\Result;
 use Magenx\Platform\Model\Metric\ResultFactory;
 use Magenx\Platform\Model\Metric\Status;
 use Magento\Framework\App\DeploymentConfig;
 use Magento\Framework\App\ResourceConnection;
+use Magento\Framework\DB\Adapter\AdapterInterface;
 
 /**
  * MariaDB / MySQL health, over the connection Magento already holds.
@@ -46,6 +48,8 @@ class MariaDb implements CollectorInterface
 
     private DeploymentConfig $deploymentConfig;
 
+    private Config $config;
+
     private ResultFactory $resultFactory;
 
     private Formatter $formatter;
@@ -55,6 +59,7 @@ class MariaDb implements CollectorInterface
     /**
      * @param ResourceConnection $resource
      * @param DeploymentConfig $deploymentConfig
+     * @param Config $config
      * @param ResultFactory $resultFactory
      * @param Formatter $formatter
      * @param Status $status
@@ -62,12 +67,14 @@ class MariaDb implements CollectorInterface
     public function __construct(
         ResourceConnection $resource,
         DeploymentConfig $deploymentConfig,
+        Config $config,
         ResultFactory $resultFactory,
         Formatter $formatter,
         Status $status
     ) {
         $this->resource = $resource;
         $this->deploymentConfig = $deploymentConfig;
+        $this->config = $config;
         $this->resultFactory = $resultFactory;
         $this->formatter = $formatter;
         $this->status = $status;
@@ -103,8 +110,16 @@ class MariaDb implements CollectorInterface
         $this->addConnectionRows($result, $globalStatus, $variables);
         $this->addInnoDbRows($result, $globalStatus, $variables);
         $this->addQueryRows($result, $globalStatus, $variables);
-        $this->addStorageRows($result, $connection, $schema);
-        $this->addQueryDigestRows($result, $connection, $variables);
+
+        // The only two slow reads on this tab, sharing one timeout window.
+        $this->withStatementTimeout(
+            $connection,
+            $variables,
+            function () use ($result, $connection, $schema, $variables): void {
+                $this->addStorageRows($result, $connection, $schema);
+                $this->addQueryDigestRows($result, $connection, $variables);
+            }
+        );
 
         return $result;
     }
@@ -197,7 +212,9 @@ class MariaDb implements CollectorInterface
         $section = 'InnoDB Buffer Pool';
         $requests = (float) ($globalStatus['Innodb_buffer_pool_read_requests'] ?? 0);
         $reads = (float) ($globalStatus['Innodb_buffer_pool_reads'] ?? 0);
-        $hitPct = $requests > 0 ? (1 - ($reads / $requests)) * 100 : 100.0;
+        // ratio() already carries the zero-denominator guard, and a pool that
+        // has served no requests yet has missed none of them.
+        $hitPct = $requests > 0 ? 100 - $this->formatter->ratio($reads, $requests) : 100.0;
 
         $result->add(
             $section,
@@ -267,11 +284,11 @@ class MariaDb implements CollectorInterface
 
     /**
      * @param Result $result
-     * @param \Magento\Framework\DB\Adapter\AdapterInterface $connection
+     * @param AdapterInterface $connection
      * @param string $schema
      * @return void
      */
-    private function addStorageRows(Result $result, $connection, string $schema): void
+    private function addStorageRows(Result $result, AdapterInterface $connection, string $schema): void
     {
         if ($schema === '') {
             return;
@@ -285,18 +302,137 @@ class MariaDb implements CollectorInterface
         // collector does — so the schema total and the largest tables are read
         // from the same scan and the total is summed here rather than by a
         // second SUM() query over the same rows.
-        $sizes = $connection->fetchPairs(
-            'SELECT table_name, data_length + index_length AS total_size '
-            . 'FROM information_schema.TABLES WHERE table_schema = ? '
-            . 'ORDER BY total_size DESC',
-            [$schema]
-        );
+        try {
+            $sizes = $connection->fetchPairs(
+                'SELECT table_name, data_length + index_length AS total_size '
+                . 'FROM information_schema.TABLES WHERE table_schema = ? '
+                . 'ORDER BY total_size DESC',
+                [$schema]
+            );
+        } catch (\Throwable) {
+            // Reported as one note, not as a dead tab. This is the only slow
+            // query on the collector, and losing it must not take the server,
+            // connection, InnoDB and query rows that already succeeded down
+            // with it.
+            $result->add(
+                $section,
+                'Schema Size',
+                'Not read',
+                Status::INFO,
+                sprintf(
+                    'The information_schema scan did not finish inside the %d second backend timeout. '
+                    . 'That is normal on a schema with many thousands of tables — every other row on '
+                    . 'this tab is unaffected.',
+                    $this->config->getTimeout()
+                )
+            );
+
+            return;
+        }
 
         $result->add($section, 'Schema Size', $this->formatter->bytes(array_sum(array_map('floatval', $sizes))));
 
         foreach (array_slice($sizes, 0, self::LARGEST_TABLES, true) as $table => $size) {
             $result->add($section, (string) $table, $this->formatter->bytes($size));
         }
+    }
+
+    /**
+     * Run the slow reads with the configured backend timeout applied.
+     *
+     * The timeout was reaching only StatusFetcher's curl handles, so the two
+     * genuinely slow queries on this tab ran to completion or to PHP's
+     * max_execution_time — which the README promised they would not.
+     *
+     * A session variable rather than MariaDB's `SET STATEMENT ... FOR` wrapper
+     * or MySQL's MAX_EXECUTION_TIME hint, deliberately: Zend_Db prepares every
+     * statement it issues, MariaDB does not allow SET STATEMENT to be prepared,
+     * and whether that even surfaces depends on PDO::ATTR_EMULATE_PREPARES. A
+     * plain SET is preparable on both servers, so this behaves the same way
+     * everywhere.
+     *
+     * SHOW GLOBAL VARIABLES has already been read by the time this is called,
+     * so the flavour is known without an extra round trip and the value to put
+     * back is known exactly.
+     *
+     * @param AdapterInterface $connection
+     * @param array $variables
+     * @param callable $read
+     * @return void
+     */
+    private function withStatementTimeout(AdapterInterface $connection, array $variables, callable $read): void
+    {
+        $variable = $this->timeoutVariable($variables);
+
+        if ($variable === null) {
+            // A server that publishes neither is left unbounded rather than
+            // guessed at.
+            $read();
+
+            return;
+        }
+
+        $seconds = $this->config->getTimeout();
+
+        // Both literals are built by sprintf from a number, so neither the
+        // limit nor the value being restored can reach the SQL as free text.
+        if ($variable === 'max_statement_time') {
+            // MariaDB 10.1+: seconds, held as a double.
+            $limit = sprintf('%.3F', $seconds);
+            $previous = sprintf('%.6F', (float) $variables[$variable]);
+        } else {
+            // MySQL 5.7.8+: milliseconds, held as an integer.
+            $limit = sprintf('%d', $seconds * 1000);
+            $previous = sprintf('%d', (int) $variables[$variable]);
+        }
+
+        try {
+            $connection->query(sprintf('SET SESSION %s = %s', $variable, $limit));
+        } catch (\Throwable) {
+            // Not every managed server lets a client set these. Reading
+            // unbounded is worse than reading bounded, but far better than
+            // losing the section.
+            $read();
+
+            return;
+        }
+
+        try {
+            $read();
+        } finally {
+            // Always put it back. Magento reuses this connection for the rest
+            // of the request, and leaving a three-second ceiling on every later
+            // query would be a spectacular way to break checkout.
+            try {
+                $connection->query(sprintf('SET SESSION %s = %s', $variable, $previous));
+            } catch (\Throwable) {
+                // Nothing useful to do, and the connection dies with the
+                // request anyway.
+            }
+        }
+    }
+
+    /**
+     * The session variable this server bounds statement runtime with.
+     *
+     * MariaDB 10.1+ spells it max_statement_time and counts in seconds; MySQL
+     * 5.7.8+ spells it max_execution_time and counts in milliseconds. Neither
+     * server accepts the other's name, and only one of the two is ever present.
+     *
+     * @param array $variables
+     * @return string|null
+     */
+    private function timeoutVariable(array $variables): ?string
+    {
+        if (isset($variables['max_statement_time'])) {
+            return 'max_statement_time';
+        }
+
+        if (isset($variables['max_execution_time'])) {
+            return 'max_execution_time';
+        }
+
+        return null;
     }
 
     /**
@@ -310,12 +446,15 @@ class MariaDb implements CollectorInterface
      * rather than allowed to redden the tab.
      *
      * @param Result $result
-     * @param \Magento\Framework\DB\Adapter\AdapterInterface $connection
+     * @param AdapterInterface $connection
      * @param array $variables
      * @return void
      */
-    private function addQueryDigestRows(Result $result, $connection, array $variables): void
-    {
+    private function addQueryDigestRows(
+        Result $result,
+        AdapterInterface $connection,
+        array $variables
+    ): void {
         $section = 'Top Queries';
 
         if (($variables['performance_schema'] ?? 'OFF') !== 'ON') {
@@ -343,13 +482,17 @@ class MariaDb implements CollectorInterface
                 . 'WHERE SCHEMA_NAME IS NOT NULL '
                 . 'ORDER BY SUM_TIMER_WAIT DESC LIMIT ' . self::TOP_QUERIES
             );
-        } catch (\Throwable $e) {
+        } catch (\Throwable) {
+            // Two causes, one note: the Magento user usually lacks SELECT here,
+            // and on a busy server the digest table can also outrun the backend
+            // timeout now that these are bounded.
             $result->add(
                 $section,
                 'performance_schema',
-                'No access',
+                'Not read',
                 Status::INFO,
-                'The Magento database user needs SELECT on performance_schema to read statement digests.'
+                'Statement digests need SELECT on performance_schema for the Magento database user, '
+                . 'and a digest table small enough to read inside the backend timeout.'
             );
 
             return;

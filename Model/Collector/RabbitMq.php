@@ -10,12 +10,11 @@ namespace Magenx\Platform\Model\Collector;
 
 use Magenx\Platform\Model\Config;
 use Magenx\Platform\Model\Formatter;
-use Magenx\Platform\Model\Http\StatusFetcher;
+use Magenx\Platform\Model\Http\JsonFetcher;
 use Magenx\Platform\Model\Metric\Result;
 use Magenx\Platform\Model\Metric\ResultFactory;
 use Magenx\Platform\Model\Metric\Status;
 use Magento\Framework\App\DeploymentConfig;
-use Magento\Framework\Serialize\Serializer\Json;
 
 /**
  * RabbitMQ health, via the HTTP management API.
@@ -45,11 +44,9 @@ class RabbitMq implements CollectorInterface
 
     private DeploymentConfig $deploymentConfig;
 
-    private StatusFetcher $fetcher;
+    private JsonFetcher $fetcher;
 
     private Config $config;
-
-    private Json $json;
 
     private ResultFactory $resultFactory;
 
@@ -59,18 +56,16 @@ class RabbitMq implements CollectorInterface
 
     /**
      * @param DeploymentConfig $deploymentConfig
-     * @param StatusFetcher $fetcher
+     * @param JsonFetcher $fetcher
      * @param Config $config
-     * @param Json $json
      * @param ResultFactory $resultFactory
      * @param Formatter $formatter
      * @param Status $status
      */
     public function __construct(
         DeploymentConfig $deploymentConfig,
-        StatusFetcher $fetcher,
+        JsonFetcher $fetcher,
         Config $config,
-        Json $json,
         ResultFactory $resultFactory,
         Formatter $formatter,
         Status $status
@@ -78,7 +73,6 @@ class RabbitMq implements CollectorInterface
         $this->deploymentConfig = $deploymentConfig;
         $this->fetcher = $fetcher;
         $this->config = $config;
-        $this->json = $json;
         $this->resultFactory = $resultFactory;
         $this->formatter = $formatter;
         $this->status = $status;
@@ -335,17 +329,10 @@ class RabbitMq implements CollectorInterface
      */
     private function getJson(string $url, array $amqp): ?array
     {
-        $body = $this->fetcher->fetch($url, (string) ($amqp['user'] ?? ''), (string) ($amqp['password'] ?? ''));
-        if ($body === null || $body === '') {
-            return null;
-        }
-
-        try {
-            $decoded = $this->json->unserialize($body);
-        } catch (\InvalidArgumentException $e) {
-            return null;
-        }
-
-        return is_array($decoded) ? $decoded : null;
+        return $this->fetcher->fetch(
+            $url,
+            (string) ($amqp['user'] ?? ''),
+            (string) ($amqp['password'] ?? '')
+        );
     }
 }

@@ -1,0 +1,7 @@
+# Composer-managed, never committed for a Magento module.
+/vendor/
+/composer.lock
+
+# PHPUnit scratch.
+/.phpunit.result.cache
+/.phpunit.cache/

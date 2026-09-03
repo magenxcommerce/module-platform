@@ -176,9 +176,17 @@ class PrometheusMetrics
      * imgproxy prefixes every metric when IMGPROXY_PROMETHEUS_NAMESPACE is set
      * and leaves them bare when it is not, so "requests_total" may arrive as
      * "imgproxy_requests_total". Matching the suffix means the admin never has
-     * to tell us which they chose. The leading underscore keeps this honest:
-     * "workers" must not match "vips_max_workers" by accident, and the "_sum"
-     * family must never pick up a "_bucket" line.
+     * to tell us which they chose.
+     *
+     * The underscore makes the boundary a whole name segment, which is what
+     * stops "workers" matching "workers_utilization" and the "_sum" family
+     * picking up a "_bucket" line. What it does NOT do is tell an exporter
+     * namespace from a longer metric name: anything ending in "_<wanted>"
+     * matches, so "workers" would also match "vips_max_workers" if imgproxy
+     * published one. The names the collectors ask for are specific enough that
+     * this does not happen against the metric set they read, and
+     * PrometheusMetricsTest pins that edge so it fails as a test rather than as
+     * a wrong number on the page.
      *
      * @param string $actual
      * @param string $wanted

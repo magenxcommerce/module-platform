@@ -79,6 +79,15 @@ imgproxy is the one that cannot be derived at all: unlike the database, Redis, a
 search hosts, it appears nowhere in `app/etc/env.php` or `core_config_data`, because Magento
 does not know it exists.
 
+Snapshots live in their own cache type, so `cache_ttl` is not the only handle on them:
+
+```bash
+bin/magento cache:clean magenx_platform   # force every tab to probe again
+```
+
+It also appears in `System > Tools > Cache Management` as **Platform Overview**, and
+switching it off there makes every tab probe live regardless of `cache_ttl`.
+
 ### Why imgproxy is read over Prometheus and not OpenTelemetry
 
 imgproxy publishes numbers two ways and only one of them is readable from a PHP module.
@@ -128,8 +137,19 @@ one hung backend from holding the whole page open — it costs one slow panel an
 else. Any `\Throwable` from a collector is turned into an "unavailable" tab by
 `Model/CollectorRunner.php`, so a dead service can never produce a 500 or a blank page.
 
+A tab that never answers is given up on after 90 seconds browser-side. That deadline is a
+backstop rather than a second copy of the probe timeout — the page refuses to start a
+second round of probes while one is in flight, so a fetch that never settles would
+otherwise leave Refresh and auto-refresh silently doing nothing for as long as the page
+stayed open.
+
 Both controllers are gated on `Magenx_Platform::platform` and are GET-only; the admin
-secret key comes from `getUrl()` in the block.
+secret key comes from `getUrl()` in the block. The metrics response is sent `no-store`, and
+the page asks for it with `cache: 'no-store'`, because a probe answered from the browser's
+cache would make Refresh look like it worked while showing the previous click's numbers.
+
+The tab strip is a real ARIA tablist: one tab is in the page's tab order and the arrow
+keys, `Home` and `End` move between them.
 
 ## Adding a backend
 
@@ -151,7 +171,30 @@ bin/magento setup:di:compile
 bin/magento cache:flush
 ```
 
-## Two things that bite when reading these values
+## Tests
+
+```bash
+composer install
+vendor/bin/phpunit                        # both suites
+vendor/bin/phpunit --testsuite standalone # no Magento needed
+```
+
+The suite is split because only half of it can run without a Magento install.
+`standalone` covers the classes that construct with no framework types at all — the
+formatter, the severity vocabulary, the metric rollup, the Prometheus reader — plus the
+pure private parsers inside the collectors, reached by reflection because they are total
+functions of their arguments and need no test doubles. It runs against nothing but this
+module, which matters because `magento/framework` sits behind repo.magento.com
+credentials. `framework` covers the classes whose collaborators are Magento interfaces
+and needs `composer install` first.
+
+What is pinned there is deliberate: every one of those helpers encodes a decision the
+source defends at length — the numeric-string array key in `breakdown()`, the shape test
+in `readSecret()`, the scheme and port precedence in `buildBaseUrl()`, `redact()` not
+crossing a slash — and a decision defended only by a comment is one careless edit from
+silently reverting.
+
+## Things that bite when reading these values
 
 - **Extension names are not the names you type.** OPcache registers itself as
   `Zend OPcache`, and `extension_loaded('opcache')` is therefore `false` on a server that
@@ -165,6 +208,11 @@ bin/magento cache:flush
   decrypted, so a plaintext password survives even when it contains a colon. A ciphertext
   that will not decrypt is never sent as the password — it would fail authentication
   anyway, and an encrypted Magento secret has no business on the wire.
+- **A configured Redis is not necessarily a Redis in use.** A `session/redis` block
+  survives in `app/etc/env.php` after `session/save` is switched away from `redis`, so the
+  Sessions card checks `session/save` before probing. When it does not match, the card says
+  "In Use: No" and stops there — reporting on an instance Magento never touches would grade
+  an idle server's evicted keys as customers being logged out mid-checkout.
 - **Credentials may live in the host setting.** A docker-compose stack commonly configures
   the search host as `http://user:password@opensearch`. The collector splits those off,
   uses them when no `_username` / `_password` pair is configured, and keeps them out of
@@ -173,15 +221,32 @@ bin/magento cache:flush
   the Nginx status URL and the RabbitMQ management URL: both are admin-entered and both are
   rendered through `StatusFetcher::redact()`, so userinfo pasted into either never comes
   back out on the page.
+- **The endpoint fields are the sensitive surface.** An admin who holds
+  `Magenx_Platform::config` can point the four endpoint settings at any `http` or `https`
+  URL and make the PHP container issue a GET to it — which is the feature, since the whole
+  job is probing services only that container can reach. The exposure is deliberately
+  narrow: no response body is ever echoed back. Nginx and imgproxy bodies are parsed and
+  only the extracted numbers rendered, RabbitMQ and OpenSearch responses are read field by
+  field, non-`http(s)` schemes are refused outright, and redirects are not followed. Scope
+  that ACL resource accordingly — it is the boundary, not the endpoint list.
 
 ## Caveats
 
 - The dashboard is live-only. There is no history and no sparklines — trends are Grafana's
   job, and `deploy/observability/` already runs it.
 - `information_schema.TABLES` is a full scan of the table cache. The schema total and the
-  five largest tables are read from a single such scan rather than two, but on a schema
-  with many thousands of tables the MariaDB tab may still time out into "unavailable"
-  rather than block.
+  five largest tables are read from a single such scan rather than two, and the scan is
+  bounded by the backend timeout — so on a schema with many thousands of tables the
+  Storage section reports "Not read" and the rest of the tab still fills in. The bound is a
+  session variable set around the two slow reads and restored afterwards:
+  `max_statement_time` on MariaDB (seconds) or `max_execution_time` on MySQL
+  (milliseconds), chosen from whichever the server publishes in `SHOW GLOBAL VARIABLES` —
+  which the collector has already read, so it costs no extra round trip. A session variable
+  rather than MariaDB's `SET STATEMENT ... FOR` or MySQL's `MAX_EXECUTION_TIME` hint because
+  Zend_Db prepares every statement and MariaDB will not prepare a `SET STATEMENT`. It is
+  always restored, since Magento reuses the connection for the rest of the request. A server
+  that publishes neither variable, or that refuses the `SET`, is read unbounded rather than
+  not read at all.
 - The search collector derives its config path prefix from `catalog/search/engine`, so it
   works against `opensearch` and `elasticsearch7` alike. An engine of `mysql` reports the
   tab as not applicable rather than broken.

@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<!--
+/**
+ * Copyright © MagenX. All rights reserved.
+ * SPDX-License-Identifier: MIT
+ *
+ * The snapshot cache is short-lived by design — cache_ttl defaults to 10
+ * seconds — so this type exists to be *cleanable* rather than to be tuned. It
+ * gives an admin a Cache Management row and `bin/magento cache:clean
+ * magenx_platform` for forcing a fresh probe, instead of cache:flush being the
+ * only handle.
+ *
+ * The type name must match Snapshot::TYPE_IDENTIFIER.
+ */
+-->
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:framework:Cache/etc/cache.xsd">
+    <type name="magenx_platform" translate="label,description" instance="Magenx\Platform\Model\Cache\Type\Snapshot">
+        <label>Platform Overview</label>
+        <description>Collected platform snapshots. Cleaning this forces every tab to probe its backend again.</description>
+    </type>
+</config>

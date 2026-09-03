@@ -172,24 +172,81 @@ define(['mage/translate'], function ($t) {
         }
     }
 
+    /**
+     * How long a single tab is given before the browser gives up on it.
+     *
+     * A backstop, not a second copy of the server-side timeout. That timeout
+     * bounds one probe, and a collector may make several in sequence — the
+     * search tab issues four — so the request can legitimately outlive it
+     * several times over. What must not happen is a request that never settles:
+     * loadAll() refuses to start a second round while one is in flight, so a
+     * hung fetch used to make Refresh and auto-refresh silently do nothing for
+     * as long as the tab stayed open.
+     *
+     * @type {Number}
+     */
+    var REQUEST_DEADLINE_MS = 90000;
+
     return function (config, element) {
         var root = element,
             meta = root.querySelector('[data-role="meta"]'),
-            inFlight = false,
-            timer = null;
+            // Server-rendered and static for the life of the page.
+            tabs = Array.prototype.slice.call(root.querySelectorAll('.magenx-platform-tab')),
+            inFlight = false;
+
+        /**
+         * Show one tab's panel and move the roving tabindex onto its button.
+         *
+         * @param {HTMLElement} tabButton
+         * @param {Boolean} [moveFocus] True when the keyboard drove this.
+         */
+        function activate(tabButton, moveFocus) {
+            var code = tabButton.getAttribute('data-collector');
+
+            tabs.forEach(function (node) {
+                var active = node === tabButton;
+
+                node.classList.toggle('_active', active);
+                node.setAttribute('aria-selected', active ? 'true' : 'false');
+                // Exactly one tab is tabbable, which is what makes the tablist
+                // one stop in the page's tab order instead of six.
+                node.setAttribute('tabindex', active ? '0' : '-1');
+            });
+
+            Array.prototype.forEach.call(root.querySelectorAll('.magenx-platform-panel'), function (node) {
+                node.classList.toggle('_active', node.getAttribute('data-panel') === code);
+            });
+
+            if (moveFocus) {
+                tabButton.focus();
+            }
+        }
 
         /**
          * @param {Object} tab
          * @returns {Promise}
          */
         function load(tab) {
-            var panel = root.querySelector('.magenx-platform-panel[data-panel="' + tab.code + '"]');
+            var panel = root.querySelector('.magenx-platform-panel[data-panel="' + tab.code + '"]'),
+                controller = typeof window.AbortController === 'function' ? new window.AbortController() : null,
+                deadline = null;
 
             paintDot(root, tab.code, 'pending');
 
+            if (controller) {
+                deadline = window.setTimeout(function () {
+                    controller.abort();
+                }, REQUEST_DEADLINE_MS);
+            }
+
             return fetch(tab.url, {
                 credentials: 'same-origin',
-                headers: {'X-Requested-With': 'XMLHttpRequest'}
+                // A probe is a measurement of right now. Answering it from the
+                // browser's cache would make Refresh look like it worked while
+                // showing the numbers from the previous click.
+                cache: 'no-store',
+                headers: {'X-Requested-With': 'XMLHttpRequest'},
+                signal: controller ? controller.signal : undefined
             }).then(function (response) {
                 if (!response.ok) {
                     throw new Error('HTTP ' + response.status);
@@ -199,15 +256,21 @@ define(['mage/translate'], function ($t) {
             }).then(function (payload) {
                 renderPanel(panel, payload);
                 paintDot(root, tab.code, payload.status || 'info');
-
-                return payload;
             }).catch(function (error) {
+                var reason = error && error.message ? error.message : 'unknown error';
+
                 renderPanel(panel, {
                     status: 'unavailable',
-                    summary: $t('This tab could not be loaded: %1').replace('%1', error.message),
+                    summary: error && error.name === 'AbortError'
+                        ? $t('This tab did not answer in time and was given up on.')
+                        : $t('This tab could not be loaded: %1').replace('%1', reason),
                     sections: []
                 });
                 paintDot(root, tab.code, 'unavailable');
+            }).then(function () {
+                if (deadline !== null) {
+                    window.clearTimeout(deadline);
+                }
             });
         }
 
@@ -220,6 +283,8 @@ define(['mage/translate'], function ($t) {
          * slowest backend, would stack a fresh round of probes on top of the
          * round still waiting — turning the dashboard into the load generator
          * the server-side snapshot cache exists to prevent.
+         *
+         * @returns {Promise}
          */
         function loadAll() {
             if (inFlight) {
@@ -232,6 +297,8 @@ define(['mage/translate'], function ($t) {
                 meta.textContent = $t('Collecting…');
             }
 
+            // load() settles every branch itself, including the deadline, so
+            // this cannot be left pending — which is what inFlight relies on.
             return Promise.all((config.tabs || []).map(load)).then(function () {
                 inFlight = false;
 
@@ -248,49 +315,86 @@ define(['mage/translate'], function ($t) {
 
         root.addEventListener('click', function (event) {
             var target = event.target,
-                tabButton,
-                refresh,
-                code;
+                tabButton;
 
             if (!target || typeof target.closest !== 'function') {
                 return;
             }
 
-            tabButton = target.closest('.magenx-platform-tab');
-            refresh = target.closest('[data-role="refresh"]');
-
-            if (refresh) {
+            if (target.closest('[data-role="refresh"]')) {
                 loadAll();
 
                 return;
             }
 
-            if (!tabButton) {
+            tabButton = target.closest('.magenx-platform-tab');
+
+            if (tabButton) {
+                activate(tabButton);
+            }
+        });
+
+        // Without this the roving tabindex above is a trap rather than a
+        // convenience: every tab but the active one is removed from the tab
+        // order, so arrow keys are the only way left to reach them.
+        root.addEventListener('keydown', function (event) {
+            var target = event.target,
+                current,
+                index,
+                next;
+
+            if (!target || typeof target.closest !== 'function') {
                 return;
             }
 
-            code = tabButton.getAttribute('data-collector');
+            current = target.closest('.magenx-platform-tab');
 
-            Array.prototype.forEach.call(root.querySelectorAll('.magenx-platform-tab'), function (node) {
-                var active = node === tabButton;
+            if (!current) {
+                return;
+            }
 
-                node.classList.toggle('_active', active);
-                node.setAttribute('aria-selected', active ? 'true' : 'false');
-                node.setAttribute('tabindex', active ? '0' : '-1');
-            });
+            index = tabs.indexOf(current);
 
-            Array.prototype.forEach.call(root.querySelectorAll('.magenx-platform-panel'), function (node) {
-                node.classList.toggle('_active', node.getAttribute('data-panel') === code);
-            });
+            switch (event.key) {
+                case 'ArrowLeft':
+                case 'ArrowUp':
+                    next = tabs[(index - 1 + tabs.length) % tabs.length];
+                    break;
+
+                case 'ArrowRight':
+                case 'ArrowDown':
+                    next = tabs[(index + 1) % tabs.length];
+                    break;
+
+                case 'Home':
+                    next = tabs[0];
+                    break;
+
+                case 'End':
+                    next = tabs[tabs.length - 1];
+                    break;
+
+                default:
+                    // Enter and Space already reach activate() as a click,
+                    // because these are real buttons.
+                    return;
+            }
+
+            if (!next) {
+                return;
+            }
+
+            event.preventDefault();
+            activate(next, true);
         });
 
         loadAll();
 
         if (config.autoRefresh > 0) {
-            timer = window.setInterval(loadAll, config.autoRefresh * 1000);
-            window.addEventListener('beforeunload', function () {
-                window.clearInterval(timer);
-            });
+            // No teardown: the interval dies with the document, and a
+            // beforeunload listener registered to clear it would cost the page
+            // its place in the browser's back/forward cache for nothing.
+            window.setInterval(loadAll, config.autoRefresh * 1000);
         }
     };
 });

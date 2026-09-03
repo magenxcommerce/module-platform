@@ -11,7 +11,6 @@ namespace Magenx\Platform\Controller\Adminhtml\Overview;
 use Magenx\Platform\Model\CollectorPool;
 use Magenx\Platform\Model\CollectorRunner;
 use Magenx\Platform\Model\Config;
-use Magenx\Platform\Model\Metric\Status;
 use Magento\Backend\App\Action;
 use Magento\Backend\App\Action\Context;
 use Magento\Framework\App\Action\HttpGetActionInterface;
@@ -66,38 +65,29 @@ class Metrics extends Action implements HttpGetActionInterface
     public function execute(): Json
     {
         $result = $this->resultJsonFactory->create();
+        // A probe is a measurement of right now, so it must never be answered
+        // from the browser's cache: a store-and-reuse would make Refresh look
+        // like it worked while showing the numbers from the previous click.
+        $result->setHeader('Cache-Control', 'no-store, no-cache, must-revalidate', true);
+        $result->setHeader('Pragma', 'no-cache', true);
+
         $code = (string) $this->getRequest()->getParam('collector', '');
 
         if (!$this->config->isEnabled()) {
-            return $result->setData($this->problem($code, 'Platform Overview is switched off in configuration.'));
+            return $result->setData(
+                $this->runner->unavailable('Platform Overview is switched off in configuration.')
+            );
         }
 
         $collector = $this->pool->get($code);
         if ($collector === null || !in_array($code, $this->config->getEnabledCollectors(), true)) {
-            return $result->setData($this->problem($code, 'That tab is not enabled.'));
+            // Deliberately says nothing about the code that was asked for. The
+            // page never reads it back — it knows which panel it requested —
+            // and echoing an unvalidated request parameter into a response body
+            // buys nothing to pay for.
+            return $result->setData($this->runner->unavailable('That tab is not enabled.'));
         }
 
         return $result->setData($this->runner->run($code, $collector));
-    }
-
-    /**
-     * A refusal shaped like a collector payload, so the page renders it the
-     * same way it renders an unreachable backend.
-     *
-     * @param string $code
-     * @param string $message
-     * @return array
-     */
-    private function problem(string $code, string $message): array
-    {
-        return [
-            'code' => $code,
-            'label' => $code,
-            'status' => Status::UNAVAILABLE,
-            'summary' => $message,
-            'sections' => [],
-            'cached' => false,
-            'elapsed_ms' => 0,
-        ];
     }
 }

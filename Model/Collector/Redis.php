@@ -89,15 +89,40 @@ class Redis implements CollectorInterface
         /** @var Result $result */
         $result = $this->resultFactory->create();
 
+        // Kept even though composer.json requires credis: a module dropped into
+        // app/code has its composer.json ignored entirely, and credis reaches a
+        // Magento install through magento/product-community-edition rather than
+        // through magento/framework — so a project assembled from framework
+        // packages alone can genuinely be without it. One red tab beats a fatal.
         if (!class_exists(\Credis_Client::class)) {
             return $result->setStatus(Status::UNAVAILABLE)
                 ->setSummary('colinmollenhour/credis is not installed, so Redis cannot be probed.');
         }
 
+        // A session/redis block survives in app/etc/env.php after session/save
+        // is switched away from redis, and probing it then reports on an
+        // instance Magento never touches — and grades it, so an evicted key on
+        // an idle server reads as "logs a customer out mid-checkout".
+        $sessionsInUse = (string) $this->deploymentConfig->get('session/save') === 'redis';
+
         $configured = 0;
         foreach (self::INSTANCES as $label => [$path, $hostKey, $isCache]) {
             $options = $this->deploymentConfig->get($path);
             if (!is_array($options)) {
+                continue;
+            }
+            if ($path === 'session/redis' && !$sessionsInUse) {
+                // Said out loud rather than silently dropped: a missing card is
+                // indistinguishable from a broken collector.
+                $result->add(
+                    $label,
+                    'In Use',
+                    'No',
+                    Status::INFO,
+                    'app/etc/env.php still carries a session/redis block, but session/save is not "redis", '
+                    . 'so Magento stores sessions elsewhere and this instance is not probed.'
+                );
+
                 continue;
             }
             // A remote-synchronized cache nests the real Redis options one level down.
@@ -113,8 +138,11 @@ class Redis implements CollectorInterface
         }
 
         if ($configured === 0) {
-            return $result->setStatus(Status::UNAVAILABLE)
-                ->setSummary('No Redis instance is configured in app/etc/env.php.');
+            return $result->setStatus(Status::UNAVAILABLE)->setSummary(
+                $sessionsInUse
+                    ? 'No Redis instance is configured in app/etc/env.php.'
+                    : 'No Redis instance is in use: nothing caches to Redis, and session/save is not "redis".'
+            );
         }
 
         $result->setSummary(sprintf('%d instance%s configured', $configured, $configured === 1 ? '' : 's'));
@@ -321,8 +349,8 @@ class Redis implements CollectorInterface
             // outlives the probe.
             try {
                 $client->close();
-            } catch (\Throwable $e) {
-                unset($e);
+            } catch (\Throwable) {
+                // Nothing useful to do about a socket that will not close.
             }
         }
 

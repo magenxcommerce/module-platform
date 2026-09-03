@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+/**
+ * Copyright © MagenX. All rights reserved.
+ * SPDX-License-Identifier: MIT
+ *
+ * The suite is split because only one half can run without a Magento install.
+ * "standalone" covers the classes that construct with no framework types at all
+ * — the formatters, the severity vocabulary, the Prometheus reader — and runs
+ * against nothing but this module. "framework" covers the classes whose
+ * collaborators are Magento interfaces, so it needs magento/framework on the
+ * autoloader to build the test doubles.
+ */
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.5/phpunit.xsd"
+         bootstrap="Test/Unit/bootstrap.php"
+         colors="true"
+         failOnWarning="true"
+         failOnRisky="true"
+         beStrictAboutOutputDuringTests="true">
+    <testsuites>
+        <testsuite name="standalone">
+            <directory>Test/Unit/Standalone</directory>
+        </testsuite>
+        <testsuite name="framework">
+            <directory>Test/Unit/Framework</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory suffix=".php">Model</directory>
+            <directory suffix=".php">Block</directory>
+            <directory suffix=".php">Controller</directory>
+        </include>
+    </source>
+</phpunit>

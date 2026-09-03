@@ -116,7 +116,13 @@ class Result
      */
     public function toArray(): array
     {
+        // One walk, not two. A section's status is the worst of its rows and the
+        // tab's is the worst of its sections, so rolling both up here costs the
+        // same pass the rows are serialized in — getStatus() would repeat the
+        // whole nested walk to reach the same answer.
         $sections = [];
+        $worst = Status::INFO;
+
         foreach ($this->sections as $label => $rows) {
             $sectionStatus = Status::INFO;
             $serialized = [];
@@ -124,6 +130,7 @@ class Result
                 $sectionStatus = $this->status->worst($sectionStatus, $row->getStatus());
                 $serialized[] = $row->toArray();
             }
+            $worst = $this->status->worst($worst, $sectionStatus);
             $sections[] = [
                 'label' => $label,
                 'status' => $sectionStatus,
@@ -132,7 +139,7 @@ class Result
         }
 
         return [
-            'status' => $this->getStatus(),
+            'status' => $this->overrideStatus ?? $worst,
             'summary' => $this->summary,
             'sections' => $sections,
         ];

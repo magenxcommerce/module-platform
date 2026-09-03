@@ -8,9 +8,9 @@ declare(strict_types=1);
 
 namespace Magenx\Platform\Model;
 
+use Magenx\Platform\Model\Cache\Type\Snapshot;
 use Magenx\Platform\Model\Collector\CollectorInterface;
 use Magenx\Platform\Model\Metric\Status;
-use Magento\Framework\App\CacheInterface;
 use Magento\Framework\Serialize\SerializerInterface;
 use Psr\Log\LoggerInterface;
 
@@ -24,11 +24,9 @@ use Psr\Log\LoggerInterface;
  */
 class CollectorRunner
 {
-    public const CACHE_TAG = 'MAGENX_PLATFORM';
-
     private const CACHE_PREFIX = 'magenx_platform_';
 
-    private CacheInterface $cache;
+    private Snapshot $cache;
 
     private SerializerInterface $serializer;
 
@@ -37,13 +35,13 @@ class CollectorRunner
     private LoggerInterface $logger;
 
     /**
-     * @param CacheInterface $cache
+     * @param Snapshot $cache
      * @param SerializerInterface $serializer
      * @param Config $config
      * @param LoggerInterface $logger
      */
     public function __construct(
-        CacheInterface $cache,
+        Snapshot $cache,
         SerializerInterface $serializer,
         Config $config,
         LoggerInterface $logger
@@ -88,11 +86,7 @@ class CollectorRunner
             $this->logger->warning(
                 sprintf('Magenx_Platform: collector "%s" failed: %s', $code, $e->getMessage())
             );
-            $payload = [
-                'status' => Status::UNAVAILABLE,
-                'summary' => $e->getMessage(),
-                'sections' => [],
-            ];
+            $payload = $this->unavailable($e->getMessage());
         }
 
         $payload['code'] = $code;
@@ -101,10 +95,41 @@ class CollectorRunner
         $payload['collected_at'] = gmdate('Y-m-d H:i:s') . ' UTC';
         $payload['cached'] = false;
 
+        // The type tags every save with Snapshot::CACHE_TAG, so an admin can
+        // force a fresh probe with `bin/magento cache:clean magenx_platform`
+        // instead of flushing everything.
         if ($ttl > 0) {
-            $this->cache->save($this->serializer->serialize($payload), $cacheKey, [self::CACHE_TAG], $ttl);
+            $this->cache->save($this->serializer->serialize($payload), $cacheKey, [], $ttl);
         }
 
         return $payload;
+    }
+
+    /**
+     * The payload shape a tab that produced no metrics renders as.
+     *
+     * Public because the metrics endpoint refuses some requests before any
+     * collector is reached — the module switched off, or a tab the admin has
+     * deselected — and a refusal has to arrive in exactly the shape a failed
+     * probe does. Defined once here rather than assembled again in the
+     * controller, which is how the two drifted: the controller's version
+     * carried no collected_at, so the panel silently dropped its freshness
+     * line for a refusal and printed one for a failure.
+     *
+     * @param string $summary
+     * @return array
+     */
+    public function unavailable(string $summary): array
+    {
+        return [
+            'code' => '',
+            'label' => '',
+            'status' => Status::UNAVAILABLE,
+            'summary' => $summary,
+            'sections' => [],
+            'cached' => false,
+            'elapsed_ms' => 0,
+            'collected_at' => gmdate('Y-m-d H:i:s') . ' UTC',
+        ];
     }
 }

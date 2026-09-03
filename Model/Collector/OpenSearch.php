@@ -9,13 +9,12 @@ declare(strict_types=1);
 namespace Magenx\Platform\Model\Collector;
 
 use Magenx\Platform\Model\Formatter;
-use Magenx\Platform\Model\Http\StatusFetcher;
+use Magenx\Platform\Model\Http\JsonFetcher;
 use Magenx\Platform\Model\Metric\Result;
 use Magenx\Platform\Model\Metric\ResultFactory;
 use Magenx\Platform\Model\Metric\Status;
 use Magento\Framework\App\Config\ScopeConfigInterface;
 use Magento\Framework\Encryption\EncryptorInterface;
-use Magento\Framework\Serialize\Serializer\Json;
 
 /**
  * Search engine health, addressed with the connection settings the catalog
@@ -37,13 +36,21 @@ class OpenSearch implements CollectorInterface
 
     private const XML_PATH_ENGINE = 'catalog/search/engine';
 
+    /**
+     * Cluster and index health are both reported as a colour, and both roll up
+     * the same way, so the mapping lives in one place.
+     */
+    private const HEALTH_STATUS = [
+        'green' => Status::OK,
+        'yellow' => Status::WARN,
+        'red' => Status::ERROR,
+    ];
+
     private ScopeConfigInterface $scopeConfig;
 
     private EncryptorInterface $encryptor;
 
-    private StatusFetcher $fetcher;
-
-    private Json $json;
+    private JsonFetcher $fetcher;
 
     private ResultFactory $resultFactory;
 
@@ -54,8 +61,7 @@ class OpenSearch implements CollectorInterface
     /**
      * @param ScopeConfigInterface $scopeConfig
      * @param EncryptorInterface $encryptor
-     * @param StatusFetcher $fetcher
-     * @param Json $json
+     * @param JsonFetcher $fetcher
      * @param ResultFactory $resultFactory
      * @param Formatter $formatter
      * @param Status $status
@@ -63,8 +69,7 @@ class OpenSearch implements CollectorInterface
     public function __construct(
         ScopeConfigInterface $scopeConfig,
         EncryptorInterface $encryptor,
-        StatusFetcher $fetcher,
-        Json $json,
+        JsonFetcher $fetcher,
         ResultFactory $resultFactory,
         Formatter $formatter,
         Status $status
@@ -72,7 +77,6 @@ class OpenSearch implements CollectorInterface
         $this->scopeConfig = $scopeConfig;
         $this->encryptor = $encryptor;
         $this->fetcher = $fetcher;
-        $this->json = $json;
         $this->resultFactory = $resultFactory;
         $this->formatter = $formatter;
         $this->status = $status;
@@ -173,13 +177,12 @@ class OpenSearch implements CollectorInterface
 
         $section = 'Cluster';
         $colour = (string) ($health['status'] ?? 'red');
-        $statusMap = ['green' => Status::OK, 'yellow' => Status::WARN, 'red' => Status::ERROR];
 
         $result->add(
             $section,
             'Health',
             $colour,
-            $statusMap[$colour] ?? Status::ERROR,
+            self::HEALTH_STATUS[$colour] ?? Status::ERROR,
             'Yellow means replicas are unassigned, which is normal on a single node. Red means primary shards are missing.'
         );
         $result->add($section, 'Nodes', $this->formatter->number($health['number_of_nodes'] ?? 0));
@@ -470,7 +473,6 @@ class OpenSearch implements CollectorInterface
             return;
         }
 
-        $statusMap = ['green' => Status::OK, 'yellow' => Status::WARN, 'red' => Status::ERROR];
         foreach ($indices as $index) {
             if (!is_array($index)) {
                 continue;
@@ -484,7 +486,7 @@ class OpenSearch implements CollectorInterface
                     $this->formatter->number($index['docs.count'] ?? 0),
                     $this->formatter->bytes($index['store.size'] ?? 0)
                 ),
-                $statusMap[$health] ?? Status::ERROR,
+                self::HEALTH_STATUS[$health] ?? Status::ERROR,
                 sprintf('Health %s, status %s.', $health, $index['status'] ?? '?')
             );
         }
@@ -551,7 +553,7 @@ class OpenSearch implements CollectorInterface
 
         try {
             $decrypted = $this->encryptor->decrypt($value);
-        } catch (\Throwable $e) {
+        } catch (\Throwable) {
             $decrypted = '';
         }
 
@@ -618,17 +620,6 @@ class OpenSearch implements CollectorInterface
      */
     private function getJson(string $url, string $user, string $password): ?array
     {
-        $body = $this->fetcher->fetch($url, $user !== '' ? $user : null, $password);
-        if ($body === null || $body === '') {
-            return null;
-        }
-
-        try {
-            $decoded = $this->json->unserialize($body);
-        } catch (\InvalidArgumentException $e) {
-            return null;
-        }
-
-        return is_array($decoded) ? $decoded : null;
+        return $this->fetcher->fetch($url, $user !== '' ? $user : null, $password);
     }
 }

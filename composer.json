@@ -5,11 +5,14 @@
     "license": "MIT",
     "require": {
         "php": "~8.3.0||~8.4.0||~8.5.0",
-        "colinmollenhour/credis": "*",
-        "magento/framework": "*",
-        "magento/module-backend": "*",
-        "magento/module-config": "*",
-        "magento/module-store": "*"
+        "colinmollenhour/credis": "^1.11",
+        "magento/framework": "^103.0",
+        "magento/module-backend": "^102.0",
+        "magento/module-config": "^101.2",
+        "magento/module-store": "^101.1"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5||^11.0"
     },
     "autoload": {
         "files": [
@@ -18,5 +21,8 @@
         "psr-4": {
             "Magenx\\Platform\\": ""
         }
+    },
+    "scripts": {
+        "test": "phpunit"
     }
 }

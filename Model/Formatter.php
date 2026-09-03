@@ -32,7 +32,8 @@ class Formatter
         }
 
         $unit = 0;
-        while ($value >= 1024 && $unit < count(self::UNITS) - 1) {
+        $largest = count(self::UNITS) - 1;
+        while ($value >= 1024 && $unit < $largest) {
             $value /= 1024;
             $unit++;
         }

@@ -119,6 +119,9 @@ class ImgProxy implements CollectorInterface
             );
         }
 
+        // Summed once and threaded through: it is the denominator every rate on
+        // this tab is measured against, and three separate passes over the same
+        // sample list to recompute the same total is work for nothing.
         $requests = $this->prometheus->sum($samples, 'requests_total');
         $result->setSummary(
             $requests === null
@@ -126,8 +129,8 @@ class ImgProxy implements CollectorInterface
                 : sprintf('%s requests served — %s', $this->formatter->number($requests), $shownUrl)
         );
 
-        $this->addTrafficRows($result, $samples);
-        $this->addStatusCodeRows($result, $samples);
+        $this->addTrafficRows($result, $samples, $requests);
+        $this->addStatusCodeRows($result, $samples, $requests);
         $this->addConcurrencyRows($result, $samples);
         $this->addTimingRows($result, $samples);
         $this->addVipsRows($result, $samples);
@@ -139,12 +142,12 @@ class ImgProxy implements CollectorInterface
     /**
      * @param Result $result
      * @param array<int, array{name: string, labels: array<string, string>, value: float}> $samples
+     * @param float|null $requests The requests_total across every label set, or null when absent.
      * @return void
      */
-    private function addTrafficRows(Result $result, array $samples): void
+    private function addTrafficRows(Result $result, array $samples, ?float $requests): void
     {
         $section = 'Traffic';
-        $requests = $this->prometheus->sum($samples, 'requests_total');
         // sum(), not a first-match lookup: imgproxy splits errors_total by type,
         // so reading a single sample would report one type's count as the total.
         $errors = $this->prometheus->sum($samples, 'errors_total');
@@ -243,9 +246,10 @@ class ImgProxy implements CollectorInterface
      *
      * @param Result $result
      * @param array<int, array{name: string, labels: array<string, string>, value: float}> $samples
+     * @param float|null $requests The requests_total across every label set, or null when absent.
      * @return void
      */
-    private function addStatusCodeRows(Result $result, array $samples): void
+    private function addStatusCodeRows(Result $result, array $samples, ?float $requests): void
     {
         $codes = $this->prometheus->breakdown($samples, 'status_codes_total');
         if ($codes === []) {
@@ -253,7 +257,6 @@ class ImgProxy implements CollectorInterface
         }
 
         $section = 'Status Codes';
-        $requests = $this->prometheus->sum($samples, 'requests_total');
 
         foreach ($codes as ['label' => $code, 'value' => $count]) {
             if ($code === '') {
