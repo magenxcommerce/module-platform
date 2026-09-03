@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/magenxcommerce/module-platform/compare/v1.1.1...v1.1.2) (2026-09-03)
+
+
+### Bug Fixes
+
+* keep breakdown labels as strings, so a status code row cannot fatal ([#15](https://github.com/magenxcommerce/module-platform/issues/15)) ([f74b67f](https://github.com/magenxcommerce/module-platform/commit/f74b67f292cbd34c42f2093ae9409917f3657fcc))
+
 ## [1.1.1](https://github.com/magenxcommerce/module-platform/compare/v1.1.0...v1.1.1) (2026-09-03)
 
 
