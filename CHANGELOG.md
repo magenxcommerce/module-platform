@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/magenxcommerce/module-platform/compare/v1.0.4...v1.1.0) (2026-09-03)
+
+
+### Features
+
+* add an imgproxy tab, deeper JVM stats and recommended extension checks ([#11](https://github.com/magenxcommerce/module-platform/issues/11)) ([ba64ef2](https://github.com/magenxcommerce/module-platform/commit/ba64ef2e022b7174afd43a598c4c6bba722f7d0f))
+
 ## [1.0.4](https://github.com/magenxcommerce/module-platform/compare/v1.0.3...v1.0.4) (2026-09-03)
 
 
