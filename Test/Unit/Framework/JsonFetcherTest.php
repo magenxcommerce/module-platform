@@ -8,15 +8,14 @@ declare(strict_types=1);
 
 namespace Magenx\Platform\Test\Unit\Framework;
 
+use Magento\Framework\Serialize\Serializer\Json;
 use Magenx\Platform\Model\Http\JsonFetcher;
 use Magenx\Platform\Model\Http\StatusFetcher;
-use Magento\Framework\Serialize\Serializer\Json;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
-/**
- * @covers \Magenx\Platform\Model\Http\JsonFetcher
- */
+#[CoversClass(JsonFetcher::class)]
 class JsonFetcherTest extends TestCase
 {
     private StatusFetcher&MockObject $statusFetcher;

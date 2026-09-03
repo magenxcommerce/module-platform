@@ -8,15 +8,15 @@ declare(strict_types=1);
 
 namespace Magenx\Platform\Test\Unit\Framework;
 
+use Magento\Framework\HTTP\Client\CurlFactory;
 use Magenx\Platform\Model\Config;
 use Magenx\Platform\Model\Http\StatusFetcher;
-use Magento\Framework\HTTP\Client\CurlFactory;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
-/**
- * @covers \Magenx\Platform\Model\Http\StatusFetcher
- */
+#[CoversClass(StatusFetcher::class)]
 class StatusFetcherTest extends TestCase
 {
     private CurlFactory&MockObject $curlFactory;
@@ -29,9 +29,7 @@ class StatusFetcherTest extends TestCase
         $this->fetcher = new StatusFetcher($this->curlFactory, $this->createMock(Config::class));
     }
 
-    /**
-     * @dataProvider rejectedSchemeProvider
-     */
+    #[DataProvider('rejectedSchemeProvider')]
     public function testOnlyHttpAndHttpsMayBeProbed(string $url): void
     {
         // The URLs come from admin config, which is ACL-gated, but a status
@@ -55,9 +53,7 @@ class StatusFetcherTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider acceptedSchemeProvider
-     */
+    #[DataProvider('acceptedSchemeProvider')]
     public function testHttpAndHttpsPassTheSchemeCheck(string $url): void
     {
         // Reaching the factory is the assertion: the scheme gate let it through.
@@ -77,9 +73,7 @@ class StatusFetcherTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider redactProvider
-     */
+    #[DataProvider('redactProvider')]
     public function testRedactStripsUserinfo(string $url, string $expected): void
     {
         // An admin who pasted http://user:password@host into configuration must

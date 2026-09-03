@@ -9,11 +9,10 @@ declare(strict_types=1);
 namespace Magenx\Platform\Test\Unit\Standalone;
 
 use Magenx\Platform\Model\Http\PrometheusMetrics;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
-/**
- * @covers \Magenx\Platform\Model\Http\PrometheusMetrics
- */
+#[CoversClass(PrometheusMetrics::class)]
 class PrometheusMetricsTest extends TestCase
 {
     private PrometheusMetrics $metrics;

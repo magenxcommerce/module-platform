@@ -11,6 +11,8 @@ namespace Magenx\Platform\Test\Unit\Standalone;
 use Magenx\Platform\Model\Collector\Nginx;
 use Magenx\Platform\Model\Collector\OpenSearch;
 use Magenx\Platform\Model\Collector\Php;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -26,11 +28,10 @@ use ReflectionClass;
  * They are pinned because each encodes a decision the source defends at length,
  * and a decision defended only by a comment is one careless edit from silently
  * reverting.
- *
- * @covers \Magenx\Platform\Model\Collector\Nginx
- * @covers \Magenx\Platform\Model\Collector\OpenSearch
- * @covers \Magenx\Platform\Model\Collector\Php
  */
+#[CoversClass(Nginx::class)]
+#[CoversClass(OpenSearch::class)]
+#[CoversClass(Php::class)]
 class PrivateParsingTest extends TestCase
 {
     /**
@@ -98,9 +99,7 @@ class PrivateParsingTest extends TestCase
         $this->assertNull($this->call(Nginx::class, 'parse', ['{"active":1}']));
     }
 
-    /**
-     * @dataProvider baseUrlProvider
-     */
+    #[DataProvider('baseUrlProvider')]
     public function testSearchBaseUrl(string $host, int $port, string $expected): void
     {
         $this->assertSame($expected, $this->call(OpenSearch::class, 'buildBaseUrl', [$host, $port]));
@@ -125,9 +124,7 @@ class PrivateParsingTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider userInfoProvider
-     */
+    #[DataProvider('userInfoProvider')]
     public function testSearchHostCredentialsAreSplitOff(string $host, array $expected): void
     {
         // A docker-compose stack commonly carries the credentials in the host
@@ -147,9 +144,7 @@ class PrivateParsingTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider plaintextSecretProvider
-     */
+    #[DataProvider('plaintextSecretProvider')]
     public function testAPlaintextSearchPasswordIsNotHandedToDecrypt(string $stored, string $expected): void
     {
         // A password locked into app/etc/env.php by deployment tooling is
@@ -174,9 +169,7 @@ class PrivateParsingTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider iniSizeProvider
-     */
+    #[DataProvider('iniSizeProvider')]
     public function testPhpIniShorthandSizes(string $value, int $expected): void
     {
         $this->assertSame($expected, $this->call(Php::class, 'toBytes', [$value]));

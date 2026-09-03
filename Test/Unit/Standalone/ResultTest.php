@@ -10,11 +10,10 @@ namespace Magenx\Platform\Test\Unit\Standalone;
 
 use Magenx\Platform\Model\Metric\Result;
 use Magenx\Platform\Model\Metric\Status;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
-/**
- * @covers \Magenx\Platform\Model\Metric\Result
- */
+#[CoversClass(Result::class)]
 class ResultTest extends TestCase
 {
     private function newResult(): Result

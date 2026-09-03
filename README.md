@@ -161,6 +161,33 @@ collector that is not part of every deployment can be left out of the `enabled_c
 default in `etc/config.xml`, which offers the tab without switching it on — that is how the
 imgproxy tab ships.
 
+## Compatibility
+
+Targets **Magento 2.4.8 and up**, on **PHP 8.3 or 8.4**.
+
+Magento 2.4.8 itself allows PHP 8.2 as well; this module deliberately does not. PHP 8.2 left
+active support in December 2024 and its security window closes at the end of 2026, so the
+floor is 8.3. Nothing in the code needs it — there is no PHP 8.3-only syntax anywhere — it is
+a support decision, not a technical one. A 2.4.8 site still on 8.2 will not resolve this
+package.
+
+Package constraints were checked against the real `magento/magento2` manifests at tag
+`2.4.8` rather than from memory: `magento/framework` `103.0.*`, `magento/module-backend`
+`102.0.*` (2.4.8 ships 102.0.8), `magento/module-config` `101.2.*`, `magento/module-store`
+`101.1.*`, `colinmollenhour/credis` `^1.15`, `phpunit/phpunit` `^10.5`.
+
+The framework behaviours this module leans on were verified against 2.4.8 source, because
+several of them are load-bearing enough that the code comments assert them:
+
+| What the module relies on | Why it holds at 2.4.8 |
+|---|---|
+| The configured probe timeout actually beats curl's own | `Curl::makeRequest()` applies `_curlUserOptions` *after* its built-in `CURLOPT_TIMEOUT`, whose default is 300s — so `setOptions()` wins |
+| Basic auth does not linger in curl state | `Curl::setCredentials()` sets an `Authorization` header, not `CURLOPT_USERPWD` |
+| `no-store` on the metrics response | `AbstractResult::setHeader($name, $value, $replace = false)` |
+| Disabling the cache type makes every tab probe live | `FrontendPool::get()` wraps each type in `AccessProxy`, which returns `false` from `load()` and short-circuits `save()` when disabled |
+| Snapshots are tagged without passing a tag | `TagScope::save()` appends its own tag |
+| `Magento\Backend\App\Action` is still the right controller base | `@api`, not deprecated in 2.4.8 |
+
 ## Install
 
 ```bash

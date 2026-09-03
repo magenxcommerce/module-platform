@@ -9,11 +9,11 @@ declare(strict_types=1);
 namespace Magenx\Platform\Test\Unit\Standalone;
 
 use Magenx\Platform\Model\Metric\Status;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
-/**
- * @covers \Magenx\Platform\Model\Metric\Status
- */
+#[CoversClass(Status::class)]
 class StatusTest extends TestCase
 {
     private Status $status;
@@ -46,9 +46,7 @@ class StatusTest extends TestCase
         $this->assertSame(Status::WARN, $this->status->worst(Status::WARN, 'nonsense'));
     }
 
-    /**
-     * @dataProvider ceilingProvider
-     */
+    #[DataProvider('ceilingProvider')]
     public function testForCeiling(float $value, string $expected): void
     {
         $this->assertSame($expected, $this->status->forCeiling($value, 85.0, 95.0));
@@ -66,9 +64,7 @@ class StatusTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider floorProvider
-     */
+    #[DataProvider('floorProvider')]
     public function testForFloorInvertsTheComparison(float $value, string $expected): void
     {
         // The InnoDB buffer pool hit rate: 99% warns, 95% is an error.

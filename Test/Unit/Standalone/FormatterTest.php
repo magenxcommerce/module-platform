@@ -9,11 +9,11 @@ declare(strict_types=1);
 namespace Magenx\Platform\Test\Unit\Standalone;
 
 use Magenx\Platform\Model\Formatter;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
-/**
- * @covers \Magenx\Platform\Model\Formatter
- */
+#[CoversClass(Formatter::class)]
 class FormatterTest extends TestCase
 {
     private Formatter $formatter;
@@ -23,9 +23,7 @@ class FormatterTest extends TestCase
         $this->formatter = new Formatter();
     }
 
-    /**
-     * @dataProvider bytesProvider
-     */
+    #[DataProvider('bytesProvider')]
     public function testBytes(mixed $input, string $expected): void
     {
         $this->assertSame($expected, $this->formatter->bytes($input));
@@ -50,9 +48,7 @@ class FormatterTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider durationProvider
-     */
+    #[DataProvider('durationProvider')]
     public function testDuration(mixed $input, string $expected): void
     {
         $this->assertSame($expected, $this->formatter->duration($input));
@@ -96,9 +92,7 @@ class FormatterTest extends TestCase
         $this->assertSame('1 234 567', $this->formatter->number(1234567));
     }
 
-    /**
-     * @dataProvider secondsProvider
-     */
+    #[DataProvider('secondsProvider')]
     public function testSecondsPicksTheUnitThatReadsBest(float $input, string $expected): void
     {
         $this->assertSame($expected, $this->formatter->seconds($input));
