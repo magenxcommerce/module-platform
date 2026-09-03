@@ -32,9 +32,10 @@ log line.
 | **MariaDB** | `ResourceConnection`, `SHOW GLOBAL STATUS` / `VARIABLES`, one `information_schema` pass, `performance_schema` statement digests | Threads connected against `max_connections`; InnoDB buffer pool hit rate; connections refused because the server was full; slow queries; schema size and the five largest tables; the top five statements by call count and by total time |
 | **Redis** | `\Credis_Client` against each configured instance (default cache, page cache, sessions) | Memory against `maxmemory`, eviction policy, evicted keys, hit rate, key count, last background save |
 | **RabbitMQ** | HTTP management API | Node alarms, memory and disk headroom, and per-queue depth against consumer count |
-| **OpenSearch** | HTTP, engine derived from `catalog/search/engine` | Cluster colour, unassigned shards, JVM heap, node disk, the store's own indices with doc counts, and which credentials the search configuration resolved to |
-| **PHP / FPM** | `opcache_get_status()` and friends in-process, plus the php-fpm status page | OPcache memory and cached keys, missing extensions, FPM listen queue, `max children reached`, host load and disk |
+| **OpenSearch** | HTTP, engine derived from `catalog/search/engine` | Cluster colour, unassigned shards, JVM heap with committed size and the young/old generation pools, old-generation GC counters, node disk, the store's own indices with doc counts, and which credentials the search configuration resolved to |
+| **PHP / FPM** | `opcache_get_status()` and friends in-process, plus the php-fpm status page | OPcache memory and cached keys, missing required extensions and missing recommended ones (`redis`, `igbinary`), FPM listen queue, `max children reached`, host load and disk |
 | **Nginx** | `stub_status` | Active connections, dropped connections, requests per connection, worker read/write/wait state. The endpoint URL rides in the tab's summary line rather than a card of its own |
+| **imgproxy** | Prometheus `/metrics` | Error rate against request count, worker utilization against `IMGPROXY_WORKERS`, and average download vs processing time — which separates a slow origin from a busy imgproxy |
 
 The two statement-digest sections answer the questions a slow database actually raises —
 what runs most often, and what burns the most total time, which are usually different
@@ -70,9 +71,36 @@ is one deployment.
 | `magenx_platform/endpoints/nginx_status_url` | `http://nginx/nginx_status` | An nginx location running `stub_status` |
 | `magenx_platform/endpoints/fpm_status_url` | `http://nginx/fpm_status` | The php-fpm `pm.status_path` endpoint |
 | `magenx_platform/endpoints/rabbitmq_management_url` | *(empty)* | Empty derives `http://<amqp host>:15672` from `env.php` |
+| `magenx_platform/endpoints/imgproxy_metrics_url` | `http://imgproxy:4594/metrics` | The imgproxy Prometheus endpoint. Needs `IMGPROXY_PROMETHEUS_BIND` set, on its own port |
 
-Only these three backends need an address: Nginx and PHP-FPM publish their stats over HTTP
-rather than through a client library, and RabbitMQ reports nothing over AMQP itself.
+Only these backends need an address. Nginx, PHP-FPM and imgproxy publish their stats over
+HTTP rather than through a client library, and RabbitMQ reports nothing over AMQP itself.
+imgproxy is the one that cannot be derived at all: unlike the database, Redis, amqp and
+search hosts, it appears nowhere in `app/etc/env.php` or `core_config_data`, because Magento
+does not know it exists.
+
+### Why imgproxy is read over Prometheus and not OpenTelemetry
+
+imgproxy publishes numbers two ways and only one of them is readable from a PHP module.
+`IMGPROXY_OPEN_TELEMETRY_ENABLE_METRICS` **pushes** OTLP to an OpenTelemetry Collector and
+exposes no endpoint, so consuming it would mean running a collector and scraping that
+instead — a pipeline, not a tab. `IMGPROXY_PROMETHEUS_BIND=:4594` serves plain-text
+exposition over HTTP, which parses with no new dependency, the same way `stub_status` does.
+
+That is a **second listener**: it cannot share the port imgproxy serves images on
+(`IMGPROXY_BIND`, `4593` on this stack), which is why the default here is the next port up
+rather than the address you already have for imgproxy.
+
+Neither costs anything to leave on: the Prometheus counters are in-process atomic
+increments serialized only when scraped, and the OTel metrics exporter is a periodic
+goroutine. OpenTelemetry **tracing** is the expensive switch — a span per request — and is
+unrelated to this tab. Bind the Prometheus listener to the private network; it is
+unauthenticated.
+
+Metric names shift between imgproxy versions, and `IMGPROXY_PROMETHEUS_NAMESPACE` prefixes
+them all when set. The reader matches on the name's suffix so it works either way, but if a
+row is missing, `curl` the endpoint and compare — a metric this module cannot find is
+silently skipped rather than guessed at.
 
 If the RabbitMQ tab reports that the management API did not answer, enable it on the broker:
 
@@ -96,7 +124,10 @@ secret key comes from `getUrl()` in the block.
 One class implementing `Model\Collector\CollectorInterface`, one line in `etc/di.xml`. The
 array key there *is* the collector code: it keys the pool, it is the stored value in the
 `enabled_collectors` multiselect, and it is the `?collector=` parameter. The tab strip and
-the config multiselect are both generated from the pool, so nothing else needs editing.
+the config multiselect are both generated from the pool, so nothing else needs editing. A
+collector that is not part of every deployment can be left out of the `enabled_collectors`
+default in `etc/config.xml`, which offers the tab without switching it on — that is how the
+imgproxy tab ships.
 
 ## Install
 

@@ -19,12 +19,23 @@
                 <auto_refresh>0</auto_refresh>
             </general>
             <collectors>
+                <!--
+                    imgproxy is deliberately absent: it is the one backend that is not
+                    part of every deployment, and the multiselect is generated from the
+                    collector pool, so the tab is offered without being switched on.
+                -->
                 <enabled_collectors>mariadb,redis,rabbitmq,opensearch,php,nginx</enabled_collectors>
             </collectors>
             <endpoints>
                 <nginx_status_url>http://nginx/nginx_status</nginx_status_url>
                 <fpm_status_url>http://nginx/fpm_status</fpm_status_url>
                 <rabbitmq_management_url/>
+                <!--
+                    NOT the port imgproxy serves images on (IMGPROXY_BIND, 4593 on this
+                    stack). IMGPROXY_PROMETHEUS_BIND opens a second listener and cannot
+                    share the first, so this is deliberately the next port up.
+                -->
+                <imgproxy_metrics_url>http://imgproxy:4594/metrics</imgproxy_metrics_url>
             </endpoints>
         </magenx_platform>
     </default>

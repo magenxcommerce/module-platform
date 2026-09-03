@@ -212,6 +212,11 @@ class OpenSearch implements CollectorInterface
      */
     private function addNodeRows(Result $result, string $base, string $user, string $password): void
     {
+        // No "human" or "pretty" on this request. "pretty" is whitespace for a
+        // person reading curl output, and "human" answers with the cluster's own
+        // preformatted strings ("1.2gb") — which is exactly what Formatter
+        // exists to stop, so that a megabyte reads the same here as on the Redis
+        // tab. Everything below is read in bytes and formatted in one place.
         $stats = $this->getJson($base . '/_nodes/stats/jvm,os,fs', $user, $password);
         if ($stats === null || !isset($stats['nodes']) || !is_array($stats['nodes'])) {
             return;
@@ -222,41 +227,213 @@ class OpenSearch implements CollectorInterface
                 continue;
             }
             $section = 'Node ' . ($node['name'] ?? '?');
+            $jvm = is_array($node['jvm'] ?? null) ? $node['jvm'] : [];
 
-            $heapPct = (float) ($node['jvm']['mem']['heap_used_percent'] ?? 0);
+            $this->addHeapRows($result, $section, $jvm);
+            $this->addGcRows($result, $section, $jvm);
+            $this->addDiskRow($result, $section, $node);
+
             $result->add(
                 $section,
-                'JVM Heap',
-                sprintf(
-                    '%s / %s (%s)',
-                    $this->formatter->bytes($node['jvm']['mem']['heap_used_in_bytes'] ?? 0),
-                    $this->formatter->bytes($node['jvm']['mem']['heap_max_in_bytes'] ?? 0),
-                    $this->formatter->percent($heapPct)
-                ),
-                $this->status->forCeiling($heapPct, self::HEAP_WARN_PCT, self::HEAP_ERROR_PCT),
-                'Sustained above 85% means garbage collection is thrashing and search latency will follow.'
+                'JVM Uptime',
+                $this->formatter->duration((int) (($jvm['uptime_in_millis'] ?? 0) / 1000)),
+                Status::INFO,
+                'How long this JVM has been up, which is not the same as how long the container has.'
             );
-
-            $total = (float) ($node['fs']['total']['total_in_bytes'] ?? 0);
-            $available = (float) ($node['fs']['total']['available_in_bytes'] ?? 0);
-            if ($total > 0) {
-                $usedPct = $this->formatter->ratio($total - $available, $total);
-                $result->add(
-                    $section,
-                    'Disk',
-                    sprintf('%s free of %s', $this->formatter->bytes($available), $this->formatter->bytes($total)),
-                    $this->status->forCeiling($usedPct, self::DISK_USED_WARN_PCT, self::DISK_USED_ERROR_PCT),
-                    'At 85% used the cluster stops allocating shards to this node; at 95% it turns indices read-only.'
-                );
-            }
-
-            $result->add($section, 'Uptime', $this->formatter->duration((int) (($node['jvm']['uptime_in_millis'] ?? 0) / 1000)));
 
             $load = $node['os']['cpu']['load_average']['1m'] ?? null;
             if ($load !== null) {
                 $result->add($section, 'Load (1m)', sprintf('%.2f', (float) $load));
             }
         }
+    }
+
+    /**
+     * Heap, what the JVM has actually taken from the OS, and the two generations.
+     *
+     * All of this rides in the same _nodes/stats/jvm response the tab already
+     * pays for; only the heap total was being read from it.
+     *
+     * @param Result $result
+     * @param string $section
+     * @param array $jvm
+     * @return void
+     */
+    private function addHeapRows(Result $result, string $section, array $jvm): void
+    {
+        $mem = is_array($jvm['mem'] ?? null) ? $jvm['mem'] : [];
+        $heapPct = (float) ($mem['heap_used_percent'] ?? 0);
+
+        $result->add(
+            $section,
+            'JVM Heap',
+            sprintf(
+                '%s / %s (%s)',
+                $this->formatter->bytes($mem['heap_used_in_bytes'] ?? 0),
+                $this->formatter->bytes($mem['heap_max_in_bytes'] ?? 0),
+                $this->formatter->percent($heapPct)
+            ),
+            $this->status->forCeiling($heapPct, self::HEAP_WARN_PCT, self::HEAP_ERROR_PCT),
+            'Sustained above 85% means garbage collection is thrashing and search latency will follow.'
+        );
+
+        if (isset($mem['heap_committed_in_bytes'])) {
+            $result->add(
+                $section,
+                'Heap Committed',
+                $this->formatter->bytes($mem['heap_committed_in_bytes']),
+                Status::INFO,
+                'What the JVM has actually reserved from the OS. Equal to the maximum means -Xms and -Xmx '
+                . 'match, which is the recommended setting — a committed size that keeps moving is the JVM '
+                . 'growing and shrinking the heap under load.'
+            );
+        }
+
+        // Pool names depend on the collector in use, so every one of these is
+        // optional: G1, CMS and the serial collectors do not agree on them.
+        $this->addPoolRow(
+            $result,
+            $section,
+            'Young Generation',
+            $mem['pools']['young'] ?? null,
+            'Short-lived objects. Churn here is normal and cheap.'
+        );
+        $this->addPoolRow(
+            $result,
+            $section,
+            'Old Generation',
+            $mem['pools']['old'] ?? null,
+            'Objects that survived collection. An old generation that stays near full is what precedes '
+            . 'an out-of-memory, long before the heap total looks alarming.'
+        );
+    }
+
+    /**
+     * One memory pool, when the running collector publishes it.
+     *
+     * @param Result $result
+     * @param string $section
+     * @param string $label
+     * @param mixed $pool
+     * @param string $hint
+     * @return void
+     */
+    private function addPoolRow(Result $result, string $section, string $label, $pool, string $hint): void
+    {
+        if (!is_array($pool) || !isset($pool['used_in_bytes'])) {
+            return;
+        }
+
+        $used = (float) $pool['used_in_bytes'];
+        $max = (float) ($pool['max_in_bytes'] ?? 0);
+
+        // G1 reports no maximum for its regions, so show the used figure alone
+        // rather than dividing by zero into a meaningless percentage.
+        $result->add(
+            $section,
+            $label,
+            $max > 0 ? $this->formatter->bytesOf($used, $max) : $this->formatter->bytes($used),
+            Status::INFO,
+            $hint
+        );
+    }
+
+    /**
+     * Garbage collection counters.
+     *
+     * @param Result $result
+     * @param string $section
+     * @param array $jvm
+     * @return void
+     */
+    private function addGcRows(Result $result, string $section, array $jvm): void
+    {
+        $collectors = $jvm['gc']['collectors'] ?? null;
+        if (!is_array($collectors)) {
+            return;
+        }
+
+        $this->addGcRow(
+            $result,
+            $section,
+            'GC Young',
+            $collectors['young'] ?? null,
+            'Young collections run constantly and are cheap. This number is context for the one below it.'
+        );
+        $this->addGcRow(
+            $result,
+            $section,
+            'GC Old',
+            $collectors['old'] ?? null,
+            'The counter that actually predicts heap trouble: old-generation collections should be rare. '
+            . 'A count that climbs while you watch means the heap is undersized for this index.'
+        );
+
+        $threads = $jvm['threads'] ?? null;
+        if (is_array($threads) && isset($threads['count'])) {
+            $result->add(
+                $section,
+                'Threads',
+                sprintf(
+                    '%s (peak %s)',
+                    $this->formatter->number($threads['count']),
+                    $this->formatter->number($threads['peak_count'] ?? $threads['count'])
+                )
+            );
+        }
+    }
+
+    /**
+     * One garbage collector's count and accumulated time.
+     *
+     * @param Result $result
+     * @param string $section
+     * @param string $label
+     * @param mixed $collector
+     * @param string $hint
+     * @return void
+     */
+    private function addGcRow(Result $result, string $section, string $label, $collector, string $hint): void
+    {
+        if (!is_array($collector) || !isset($collector['collection_count'])) {
+            return;
+        }
+
+        $result->add(
+            $section,
+            $label,
+            sprintf(
+                '%s collections, %s total',
+                $this->formatter->number($collector['collection_count']),
+                $this->formatter->seconds((float) ($collector['collection_time_in_millis'] ?? 0) / 1000)
+            ),
+            Status::INFO,
+            $hint
+        );
+    }
+
+    /**
+     * @param Result $result
+     * @param string $section
+     * @param array $node
+     * @return void
+     */
+    private function addDiskRow(Result $result, string $section, array $node): void
+    {
+        $total = (float) ($node['fs']['total']['total_in_bytes'] ?? 0);
+        $available = (float) ($node['fs']['total']['available_in_bytes'] ?? 0);
+        if ($total <= 0) {
+            return;
+        }
+
+        $usedPct = $this->formatter->ratio($total - $available, $total);
+        $result->add(
+            $section,
+            'Disk',
+            sprintf('%s free of %s', $this->formatter->bytes($available), $this->formatter->bytes($total)),
+            $this->status->forCeiling($usedPct, self::DISK_USED_WARN_PCT, self::DISK_USED_ERROR_PCT),
+            'At 85% used the cluster stops allocating shards to this node; at 95% it turns indices read-only.'
+        );
     }
 
     /**

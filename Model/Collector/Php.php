@@ -60,6 +60,19 @@ class Php implements CollectorInterface
         'gd' => ['gd'],
     ];
 
+    /**
+     * Extensions that are not required but change how well this stack runs.
+     *
+     * Same shape as REQUIRED_EXTENSIONS, reported separately and never as an
+     * error. Magento requires neither, and this module's own Redis tab talks to
+     * Redis through pure-PHP Credis precisely so it works on a container built
+     * without ext-redis — so a missing one is advice, not a fault.
+     */
+    private const RECOMMENDED_EXTENSIONS = [
+        'redis' => ['redis'],
+        'igbinary' => ['igbinary'],
+    ];
+
     private StatusFetcher $fetcher;
 
     private Config $config;
@@ -167,8 +180,40 @@ class Php implements CollectorInterface
      */
     private function addExtensionRow(Result $result): void
     {
+        $missingRequired = $this->missingFrom(self::REQUIRED_EXTENSIONS);
+        $result->add(
+            'Runtime',
+            'Required Extensions',
+            $missingRequired === [] ? 'All present' : 'Missing: ' . implode(', ', $missingRequired),
+            $missingRequired === [] ? Status::OK : Status::ERROR,
+            implode(', ', array_keys(self::REQUIRED_EXTENSIONS))
+        );
+
+        // Warn, never error: the page must not go red over an extension that
+        // Magento does not require and that this module does not need to do its
+        // own job.
+        $missingRecommended = $this->missingFrom(self::RECOMMENDED_EXTENSIONS);
+        $result->add(
+            'Runtime',
+            'Recommended Extensions',
+            $missingRecommended === [] ? 'All present' : 'Missing: ' . implode(', ', $missingRecommended),
+            $missingRecommended === [] ? Status::OK : Status::WARN,
+            'phpredis moves cache and session traffic faster than the pure-PHP client Magento falls back '
+            . 'to, and igbinary shrinks what gets stored in Redis. Neither is required, and the Redis tab '
+            . 'reads your instances without them.'
+        );
+    }
+
+    /**
+     * The display names in a map whose every candidate name is unloaded.
+     *
+     * @param array $extensions Display name => the names PHP may have registered it under.
+     * @return string[]
+     */
+    private function missingFrom(array $extensions): array
+    {
         $missing = [];
-        foreach (self::REQUIRED_EXTENSIONS as $label => $candidates) {
+        foreach ($extensions as $label => $candidates) {
             $loaded = false;
             foreach ($candidates as $candidate) {
                 if (extension_loaded($candidate)) {
@@ -181,13 +226,7 @@ class Php implements CollectorInterface
             }
         }
 
-        $result->add(
-            'Runtime',
-            'Required Extensions',
-            $missing === [] ? 'All present' : 'Missing: ' . implode(', ', $missing),
-            $missing === [] ? Status::OK : Status::ERROR,
-            implode(', ', array_keys(self::REQUIRED_EXTENSIONS))
-        );
+        return $missing;
     }
 
     /**

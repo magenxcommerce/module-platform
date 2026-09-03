@@ -26,6 +26,7 @@ class Config
     public const XML_PATH_NGINX_STATUS_URL = 'magenx_platform/endpoints/nginx_status_url';
     public const XML_PATH_FPM_STATUS_URL = 'magenx_platform/endpoints/fpm_status_url';
     public const XML_PATH_RABBITMQ_MANAGEMENT_URL = 'magenx_platform/endpoints/rabbitmq_management_url';
+    public const XML_PATH_IMGPROXY_METRICS_URL = 'magenx_platform/endpoints/imgproxy_metrics_url';
 
     /**
      * A probe that outlives this is reported as unavailable rather than allowed
@@ -116,5 +117,17 @@ class Config
     public function getRabbitMqManagementUrl(): string
     {
         return rtrim(trim((string) $this->scopeConfig->getValue(self::XML_PATH_RABBITMQ_MANAGEMENT_URL)), '/');
+    }
+
+    /**
+     * Unlike the database, Redis, amqp and search hosts, imgproxy appears
+     * nowhere in Magento's own configuration — Magento does not know it exists —
+     * so there is nothing to derive and this address has to be given.
+     *
+     * @return string
+     */
+    public function getImgProxyMetricsUrl(): string
+    {
+        return trim((string) $this->scopeConfig->getValue(self::XML_PATH_IMGPROXY_METRICS_URL));
     }
 }

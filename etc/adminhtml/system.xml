@@ -61,7 +61,7 @@
             </group>
             <group id="endpoints" translate="label comment" type="text" sortOrder="30" showInDefault="1">
                 <label>Status Endpoints</label>
-                <comment>Only these three backends need an address configured. Nginx and PHP-FPM publish their stats over HTTP rather than through a client library, and RabbitMQ reports nothing over AMQP itself — its numbers come from the management API.</comment>
+                <comment>Only these backends need an address configured. Nginx, PHP-FPM and imgproxy publish their stats over HTTP rather than through a client library, RabbitMQ reports nothing over AMQP itself — its numbers come from the management API — and imgproxy is absent from Magento's own configuration entirely, so there is nothing to derive it from.</comment>
                 <field id="nginx_status_url" translate="label comment" type="text" sortOrder="10" showInDefault="1" canRestoreToDefault="1">
                     <label>Nginx Status URL</label>
                     <comment>URL of an nginx stub_status endpoint, reachable from the PHP container. Leave empty to disable the Nginx tab's probe.</comment>
@@ -75,6 +75,11 @@
                 <field id="rabbitmq_management_url" translate="label comment" type="text" sortOrder="30" showInDefault="1" canRestoreToDefault="1">
                     <label>RabbitMQ Management URL</label>
                     <comment>Base URL of the RabbitMQ management API, for example http://rabbitmq:15672. Leave empty to derive it from the amqp host in app/etc/env.php on port 15672. Credentials are always taken from env.php, never entered here.</comment>
+                    <depends><field id="enabled">1</field></depends>
+                </field>
+                <field id="imgproxy_metrics_url" translate="label comment" type="text" sortOrder="40" showInDefault="1" canRestoreToDefault="1">
+                    <label>imgproxy Metrics URL</label>
+                    <comment>URL of the imgproxy Prometheus endpoint, reachable from the PHP container. Start imgproxy with IMGPROXY_PROMETHEUS_BIND (for example ":4594") to publish it. This is a second listener and cannot share the port imgproxy serves images on, so it is not the IMGPROXY_BIND address. The OpenTelemetry metrics switch pushes to a collector instead and exposes nothing to read here. Leave empty to disable the imgproxy probe.</comment>
                     <depends><field id="enabled">1</field></depends>
                 </field>
             </group>

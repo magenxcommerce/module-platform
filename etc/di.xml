@@ -20,6 +20,7 @@
                 <item name="opensearch" xsi:type="object">Magenx\Platform\Model\Collector\OpenSearch</item>
                 <item name="php" xsi:type="object">Magenx\Platform\Model\Collector\Php</item>
                 <item name="nginx" xsi:type="object">Magenx\Platform\Model\Collector\Nginx</item>
+                <item name="imgproxy" xsi:type="object">Magenx\Platform\Model\Collector\ImgProxy</item>
             </argument>
         </arguments>
     </type>
