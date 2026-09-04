@@ -195,18 +195,26 @@ define(['mage/translate'], function ($t) {
             inFlight = false;
 
         /**
-         * Show one tab's panel and move the roving tabindex onto its button.
+         * Show one tab's panel and move the roving tabindex onto its link.
          *
-         * @param {HTMLElement} tabButton
+         * @param {HTMLElement} tabLink
          * @param {Boolean} [moveFocus] True when the keyboard drove this.
          */
-        function activate(tabButton, moveFocus) {
-            var code = tabButton.getAttribute('data-collector');
+        function activate(tabLink, moveFocus) {
+            var code = tabLink.getAttribute('data-collector');
 
             tabs.forEach(function (node) {
-                var active = node === tabButton;
+                var active = node === tabLink,
+                    // The admin theme hangs the selected style off the list
+                    // item as well as the link, so both carry the marker.
+                    item = node.closest('.admin__page-nav-item');
 
                 node.classList.toggle('_active', active);
+
+                if (item) {
+                    item.classList.toggle('_active', active);
+                }
+
                 node.setAttribute('aria-selected', active ? 'true' : 'false');
                 // Exactly one tab is tabbable, which is what makes the tablist
                 // one stop in the page's tab order instead of six.
@@ -315,7 +323,7 @@ define(['mage/translate'], function ($t) {
 
         root.addEventListener('click', function (event) {
             var target = event.target,
-                tabButton;
+                tabLink;
 
             if (!target || typeof target.closest !== 'function') {
                 return;
@@ -327,16 +335,18 @@ define(['mage/translate'], function ($t) {
                 return;
             }
 
-            tabButton = target.closest('.magenx-platform-tab');
+            tabLink = target.closest('.magenx-platform-tab');
 
-            if (tabButton) {
-                activate(tabButton);
+            if (tabLink) {
+                activate(tabLink);
             }
         });
 
         // Without this the roving tabindex above is a trap rather than a
         // convenience: every tab but the active one is removed from the tab
-        // order, so arrow keys are the only way left to reach them.
+        // order, so arrow keys are the only way left to reach them. Up and
+        // Down lead because the strip is vertical; Left and Right are kept as
+        // synonyms rather than as a second behaviour.
         root.addEventListener('keydown', function (event) {
             var target = event.target,
                 current,
@@ -356,13 +366,13 @@ define(['mage/translate'], function ($t) {
             index = tabs.indexOf(current);
 
             switch (event.key) {
-                case 'ArrowLeft':
                 case 'ArrowUp':
+                case 'ArrowLeft':
                     next = tabs[(index - 1 + tabs.length) % tabs.length];
                     break;
 
-                case 'ArrowRight':
                 case 'ArrowDown':
+                case 'ArrowRight':
                     next = tabs[(index + 1) % tabs.length];
                     break;
 
@@ -374,9 +384,17 @@ define(['mage/translate'], function ($t) {
                     next = tabs[tabs.length - 1];
                     break;
 
+                case 'Enter':
+                case ' ':
+                    // A button would have raised a click here by itself. These
+                    // are the admin's own nav anchors, carrying no href so that
+                    // selecting a tab cannot push a history entry, and an
+                    // anchor without one raises nothing — so activation is
+                    // spelled out.
+                    next = current;
+                    break;
+
                 default:
-                    // Enter and Space already reach activate() as a click,
-                    // because these are real buttons.
                     return;
             }
 

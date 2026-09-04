@@ -3,49 +3,71 @@
  * SPDX-License-Identifier: MIT
  */
 
-.magenx-platform-bar {
+/*
+ * The page is the admin's own two-column shape: admin__page-nav on the left,
+ * one panel at a time on the right. Only the box that holds the two columns
+ * belongs to this module — everything inside the nav is themed by
+ * Magento_Backend, so the tabs follow the admin theme rather than carrying a
+ * second opinion about what a tab looks like.
+ */
+.magenx-platform-toolbar {
     align-items: center;
-    border-bottom: 1px solid #d6d6d6;
     display: flex;
-    flex-wrap: wrap;
     gap: 12px;
-    justify-content: space-between;
-    margin-bottom: 20px;
+    justify-content: flex-end;
+    margin-bottom: 12px;
 }
 
-.magenx-platform-tabs {
+.magenx-platform-columns {
+    align-items: flex-start;
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    list-style: none;
-    margin: 0;
-    padding: 0;
+    gap: 24px;
 }
 
-.magenx-platform-tab {
-    background: none;
-    border: 0;
-    border-bottom: 3px solid transparent;
-    color: #303030;
-    cursor: pointer;
-    font-size: 14px;
-    padding: 10px 14px;
+.magenx-platform-nav {
+    flex: 0 0 232px;
+    max-width: 232px;
 }
 
-.magenx-platform-tab._active {
-    border-bottom-color: #007bdb;
-    font-weight: 600;
+.magenx-platform-content {
+    flex: 1 1 auto;
+    /*
+     * A flex child sizes to its content by default, so one wide card — a long
+     * error message, a monospace URL — would stretch the column and push the
+     * nav off the page instead of wrapping inside it.
+     */
+    min-width: 0;
 }
 
 /*
- * The tablist keeps one tabbable button and moves between the rest with the
- * arrow keys, so the focus ring is the only thing telling a keyboard user where
- * they are. `border: 0` above drops the button's own outline, so put one back —
- * :focus-visible rather than :focus, to keep it off a mouse click.
+ * The tab is an anchor with no href, so that clicking one cannot push a
+ * history entry or jump the page to an anchor. That also costs it the pointer
+ * cursor a link normally gets.
+ */
+.magenx-platform-tab {
+    cursor: pointer;
+}
+
+/*
+ * The tablist keeps one tabbable link and moves between the rest with the
+ * arrow keys, so the focus ring is the only thing telling a keyboard user
+ * where they are. :focus-visible rather than :focus, to keep it off a mouse
+ * click.
  */
 .magenx-platform-tab:focus-visible {
     outline: 2px solid #007bdb;
     outline-offset: -2px;
+}
+
+@media (max-width: 767px) {
+    .magenx-platform-columns {
+        display: block;
+    }
+
+    .magenx-platform-nav {
+        margin-bottom: 20px;
+        max-width: none;
+    }
 }
 
 .magenx-platform-dot {
@@ -63,12 +85,6 @@
 .magenx-platform-dot[data-status="warn"] { background: #eb5202; }
 .magenx-platform-dot[data-status="unavailable"] { background: #8f8f8f; }
 .magenx-platform-dot[data-status="error"] { background: #e22626; }
-
-.magenx-platform-actions {
-    align-items: center;
-    display: flex;
-    gap: 12px;
-}
 
 .magenx-platform-meta {
     color: #6f6f6f;
@@ -104,7 +120,7 @@
 .magenx-platform-grid {
     display: grid;
     gap: 16px;
-    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
 }
 
 .magenx-platform-card {

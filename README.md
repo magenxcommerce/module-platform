@@ -8,8 +8,10 @@ the storefront's request metrics, but there is nothing in the admin that answers
 stack healthy right now?"* — the question a shop admin actually asks when orders stop
 confirming or search goes empty.
 
-This module answers it. **System > Tools > Platform Overview** shows one tab per backend,
-each with the handful of numbers that predict trouble, read live from the running service.
+This module answers it. **System > Tools > Platform Overview** lists the backends down the
+left-hand side in the admin's own `admin__page-nav` strip — the same one system
+configuration uses — and shows one panel per backend, each with the handful of numbers
+that predict trouble, read live from the running service.
 
 It is read-only. It writes nothing, changes nothing, runs no cron, and touches no
 storefront request path. Opening the page is the only thing that makes it do any work.
@@ -33,7 +35,7 @@ log line.
 | **Redis** | `\Credis_Client` against each configured instance (default cache, page cache, sessions) | Memory against `maxmemory`, eviction policy, evicted keys, hit rate, key count, last background save |
 | **RabbitMQ** | HTTP management API | Node alarms, memory and disk headroom, and per-queue depth against consumer count |
 | **OpenSearch** | HTTP, engine derived from `catalog/search/engine` | Cluster colour, unassigned shards, JVM heap with committed size and the young/old generation pools, old-generation GC counters, node disk, the store's own indices with doc counts, and which credentials the search configuration resolved to |
-| **PHP / FPM** | `opcache_get_status()` and friends in-process, plus the php-fpm status page | OPcache memory and cached keys, missing required extensions and missing recommended ones (`redis`, `igbinary`), FPM listen queue, `max children reached`, host load and disk |
+| **PHP / FPM** | `opcache_get_status()` and friends in-process, plus the php-fpm status page | OPcache memory and cached keys, missing required extensions and missing recommended ones (`redis`, `igbinary`), every field the FPM status page publishes — pool, process manager, start time and uptime, accepted connections with their average rate, the listen queue live and at its high-water mark against the socket backlog, idle/active/total and peak-active processes, `max children reached`, slow requests and memory peak — plus host load and disk |
 | **Nginx** | `stub_status` | Active connections, dropped connections, requests per connection, worker read/write/wait state. The endpoint URL rides in the tab's summary line rather than a card of its own |
 | **imgproxy** | Prometheus `/metrics` | Error rate and errors split by type, 5xx share of requests, worker utilization, the queue/downloading/processing spans — which separate a saturated imgproxy from a slow origin from an expensive image — and libvips memory against its peak |
 
@@ -51,6 +53,10 @@ Two readings are worth calling out because they are commonly misread:
 - **OPcache figures describe one PHP-FPM worker** — the one that answered your request —
   not the pool. The FPM process-manager rows below them are pool-wide. The page says so in
   a footnote for the same reason.
+- **Max listen queue is read against the socket backlog**, not against zero. A backlog
+  high-water mark that has reached `listen queue len` means the kernel had nowhere left to
+  put the next connection, and nginx reported that as a 502 — a fault raised by a different
+  service, with its cause on this tab.
 
 Thresholds are class constants in each collector rather than admin fields, so there is
 nothing to tune and nothing to get wrong; grep for `_WARN_` and `_ERROR_` in

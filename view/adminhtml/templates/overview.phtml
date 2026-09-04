@@ -20,53 +20,70 @@ $tabs = $block->getTabs();
     </div>
 <?php else: ?>
     <div class="magenx-platform" data-mage-init='<?= $escaper->escapeHtmlAttr($block->getJsInit()) ?>'>
-        <div class="magenx-platform-bar">
-            <ul class="magenx-platform-tabs" role="tablist">
-                <?php foreach ($tabs as $index => $tab): ?>
-                    <?php /* role="presentation" on the li: ARIA requires the tabs to be the
-                           tablist's own children, and a bare <li> between them breaks that
-                           relationship for a screen reader. */ ?>
-                    <li role="presentation">
-                        <button type="button"
-                                class="magenx-platform-tab<?= $index === 0 ? ' _active' : '' ?>"
-                                role="tab"
-                                id="magenx-platform-tab-<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
-                                data-collector="<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
-                                aria-controls="magenx-platform-panel-<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
-                                aria-selected="<?= $index === 0 ? 'true' : 'false' ?>"
-                                tabindex="<?= $index === 0 ? '0' : '-1' ?>">
-                            <span class="magenx-platform-dot" data-status="pending"></span>
-                            <span class="magenx-platform-tab-label"><?= $escaper->escapeHtml($tab['label']) ?></span>
-                        </button>
-                    </li>
-                <?php endforeach; ?>
-            </ul>
-            <div class="magenx-platform-actions">
-                <span class="magenx-platform-meta" data-role="meta"></span>
-                <button type="button" class="action-secondary" data-role="refresh">
-                    <?= $escaper->escapeHtml(__('Refresh')) ?>
-                </button>
-            </div>
+        <div class="magenx-platform-toolbar">
+            <span class="magenx-platform-meta" data-role="meta"></span>
+            <button type="button" class="action-secondary" data-role="refresh">
+                <?= $escaper->escapeHtml(__('Refresh')) ?>
+            </button>
         </div>
 
-        <?php foreach ($tabs as $index => $tab): ?>
-            <section class="magenx-platform-panel<?= $index === 0 ? ' _active' : '' ?>"
-                     role="tabpanel"
-                     id="magenx-platform-panel-<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
-                     aria-labelledby="magenx-platform-tab-<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
-                     data-panel="<?= $escaper->escapeHtmlAttr($tab['code']) ?>">
-                <p class="magenx-platform-loading"><?= $escaper->escapeHtml(__('Loading…')) ?></p>
-            </section>
-        <?php endforeach; ?>
+        <div class="magenx-platform-columns">
+            <?php /* admin__page-nav is the admin's own left-hand tab strip — the one
+                   system configuration and the product form use. Reusing its markup
+                   means this dashboard follows the theme instead of shipping a second
+                   opinion about what a tab looks like. */ ?>
+            <div class="admin__page-nav magenx-platform-nav">
+                <div class="admin__page-nav-title">
+                    <strong><?= $escaper->escapeHtml(__('Services')) ?></strong>
+                </div>
+                <ul class="admin__page-nav-items" role="tablist" aria-orientation="vertical">
+                    <?php foreach ($tabs as $index => $tab): ?>
+                        <?php /* role="presentation" on the li: ARIA requires the tabs to be the
+                               tablist's own children, and a bare <li> between them breaks that
+                               relationship for a screen reader. */ ?>
+                        <li class="admin__page-nav-item<?= $index === 0 ? ' _active' : '' ?>" role="presentation">
+                            <?php /* An anchor without href, which is what keeps a tab click from
+                                   pushing a history entry or scrolling the page. It costs the
+                                   anchor its native Enter handling, so the keyboard is served by
+                                   the tablist's own keydown listener instead. */ ?>
+                            <a class="admin__page-nav-link magenx-platform-tab<?= $index === 0 ? ' _active' : '' ?>"
+                               role="tab"
+                               id="magenx-platform-tab-<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
+                               data-collector="<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
+                               aria-controls="magenx-platform-panel-<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
+                               aria-selected="<?= $index === 0 ? 'true' : 'false' ?>"
+                               tabindex="<?= $index === 0 ? '0' : '-1' ?>">
+                                <span class="magenx-platform-dot" data-status="pending"></span>
+                                <span class="magenx-platform-tab-label">
+                                    <?= $escaper->escapeHtml($tab['label']) ?>
+                                </span>
+                            </a>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
 
-        <p class="magenx-platform-footnote">
-            <?= $escaper->escapeHtml(
-                __(
-                    'Figures are read live from the running services. OPcache values describe the single PHP-FPM '
-                    . 'worker that answered this request, not the whole pool — the process manager rows below them '
-                    . 'are pool-wide.'
-                )
-            ) ?>
-        </p>
+            <div class="magenx-platform-content">
+                <?php foreach ($tabs as $index => $tab): ?>
+                    <section class="magenx-platform-panel<?= $index === 0 ? ' _active' : '' ?>"
+                             role="tabpanel"
+                             id="magenx-platform-panel-<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
+                             aria-labelledby="magenx-platform-tab-<?= $escaper->escapeHtmlAttr($tab['code']) ?>"
+                             data-panel="<?= $escaper->escapeHtmlAttr($tab['code']) ?>">
+                        <p class="magenx-platform-loading"><?= $escaper->escapeHtml(__('Loading…')) ?></p>
+                    </section>
+                <?php endforeach; ?>
+
+                <p class="magenx-platform-footnote">
+                    <?= $escaper->escapeHtml(
+                        __(
+                            'Figures are read live from the running services. OPcache values describe the '
+                            . 'single PHP-FPM worker that answered this request, not the whole pool — the '
+                            . 'process manager rows below them are pool-wide.'
+                        )
+                    ) ?>
+                </p>
+            </div>
+        </div>
     </div>
 <?php endif; ?>

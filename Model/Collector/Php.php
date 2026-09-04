@@ -310,6 +310,19 @@ class Php implements CollectorInterface
     }
 
     /**
+     * The pool-wide view, one row per field the status page publishes.
+     *
+     * php-fpm names its fields with spaces ("max children reached"), and those
+     * names are the contract — they are what the FPM documentation calls them
+     * and what every other tool reading this endpoint keys on.
+     *
+     * The set of them grows with the PHP version, so which ones are optional
+     * decides how they are read. A field that is always published is defaulted
+     * with ??, because a pool that has never queued a request really does mean
+     * zero. A field that may not exist at all — "memory peak" arrived in PHP
+     * 8.1 — is gated on array_key_exists instead, so an older FPM omits the row
+     * rather than reporting a zero that reads as a measurement.
+     *
      * @param Result $result
      * @return void
      */
@@ -356,27 +369,185 @@ class Php implements CollectorInterface
         }
 
         $result->add($section, 'Pool', (string) ($fpm['pool'] ?? 'n/a'));
-        $result->add($section, 'Process Manager', (string) ($fpm['process manager'] ?? 'n/a'));
+        $result->add(
+            $section,
+            'Process Manager',
+            (string) ($fpm['process manager'] ?? 'n/a'),
+            Status::INFO,
+            'static keeps every worker resident; dynamic and ondemand start and reap them as traffic moves.'
+        );
+
+        $this->addFpmUptimeRow($result, $section, $fpm);
+        $this->addFpmProcessRows($result, $section, $fpm);
+        $this->addFpmQueueRows($result, $section, $fpm);
+        $this->addFpmWorkRows($result, $section, $fpm);
+    }
+
+    /**
+     * "start time" and "start since" — the same instant said twice.
+     *
+     * Printed as one row because that is how it gets read: the date answers
+     * "was this the deploy?" and the elapsed time answers "how far back?", and
+     * neither is worth a row of its own.
+     *
+     * @param Result $result
+     * @param string $section
+     * @param array $fpm
+     * @return void
+     */
+    private function addFpmUptimeRow(Result $result, string $section, array $fpm): void
+    {
+        $startTime = $this->formatFpmStartTime($fpm['start time'] ?? null);
+        $since = $fpm['start since'] ?? null;
+
+        if ($startTime === '' && !is_numeric($since)) {
+            return;
+        }
+
+        $value = $startTime === '' ? 'n/a' : $startTime;
+        if (is_numeric($since)) {
+            $value .= sprintf(' (up %s)', $this->formatter->duration($since));
+        }
+
+        $result->add(
+            $section,
+            'Started',
+            $value,
+            Status::INFO,
+            'A pool that started more recently than your last deploy was killed and respawned — '
+            . 'look for an OOM kill or a crashing worker.'
+        );
+    }
+
+    /**
+     * php-fpm reports "start time" as a Unix timestamp in the JSON format and
+     * as an already-formatted date in the HTML one. Both can arrive here, and a
+     * timestamp is printed in UTC to match every other time on this dashboard
+     * rather than in whatever zone the FPM host happens to be set to.
+     *
+     * @param mixed $value
+     * @return string Empty when the field was absent.
+     */
+    private function formatFpmStartTime(mixed $value): string
+    {
+        if ($value === null || $value === '') {
+            return '';
+        }
+
+        if (is_numeric($value)) {
+            return gmdate('Y-m-d H:i:s', (int) $value) . ' UTC';
+        }
+
+        return (string) $value;
+    }
+
+    /**
+     * "idle processes", "active processes", "total processes" and
+     * "max active processes".
+     *
+     * @param Result $result
+     * @param string $section
+     * @param array $fpm
+     * @return void
+     */
+    private function addFpmProcessRows(Result $result, string $section, array $fpm): void
+    {
+        $active = (int) ($fpm['active processes'] ?? 0);
+        $idle = (int) ($fpm['idle processes'] ?? 0);
+        $total = (int) ($fpm['total processes'] ?? 0);
+
         $result->add(
             $section,
             'Processes',
             sprintf(
                 '%s active, %s idle, %s total',
-                $this->formatter->number($fpm['active processes'] ?? 0),
-                $this->formatter->number($fpm['idle processes'] ?? 0),
-                $this->formatter->number($fpm['total processes'] ?? 0)
-            )
+                $this->formatter->number($active),
+                $this->formatter->number($idle),
+                $this->formatter->number($total)
+            ),
+            // No idle worker left means the next request queues behind a
+            // running one. It is the moment before "max children reached"
+            // starts counting, which is the only saturation warning that
+            // arrives early enough to act on.
+            //
+            // Guarded on more than one worker on purpose: an ondemand pool
+            // serving nothing but this very status request reports one process,
+            // busy, zero idle, and that is a healthy idle pool rather than a
+            // saturated one.
+            $total > 1 && $idle === 0 ? Status::WARN : Status::OK,
+            'Idle workers are the pool\'s headroom for the next request.'
         );
 
+        if (array_key_exists('max active processes', $fpm)) {
+            $result->add(
+                $section,
+                'Max Active Processes',
+                $this->formatter->number($fpm['max active processes']),
+                Status::INFO,
+                'The busiest this pool has been since it started. Size pm.max_children above it, not at it.'
+            );
+        }
+    }
+
+    /**
+     * "listen queue", "max listen queue" and "listen queue len".
+     *
+     * @param Result $result
+     * @param string $section
+     * @param array $fpm
+     * @return void
+     */
+    private function addFpmQueueRows(Result $result, string $section, array $fpm): void
+    {
         $listenQueue = (int) ($fpm['listen queue'] ?? 0);
+        $maxListenQueue = (int) ($fpm['max listen queue'] ?? 0);
+        $queueLen = (int) ($fpm['listen queue len'] ?? 0);
+
         $result->add(
             $section,
             'Listen Queue',
-            sprintf('%d (max seen %d)', $listenQueue, (int) ($fpm['max listen queue'] ?? 0)),
+            $this->formatter->number($listenQueue),
             $listenQueue > 0 ? Status::WARN : Status::OK,
-            'Requests waiting for a free worker. Anything above zero is queueing latency the customer feels.'
+            'Requests waiting for a free worker right now. Anything above zero is queueing latency the '
+            . 'customer feels.'
         );
 
+        $result->add(
+            $section,
+            'Max Listen Queue',
+            $this->formatter->number($maxListenQueue),
+            // Measured against the backlog, not against zero. A queue that has
+            // touched its ceiling means the kernel had nowhere left to put the
+            // next connection, and nginx saw that as a 502 rather than as a
+            // slow page — a different fault, reported by a different service,
+            // with its cause on this tab.
+            $queueLen > 0 && $maxListenQueue >= $queueLen ? Status::WARN : Status::INFO,
+            'The deepest the backlog has been since the pool started.'
+        );
+
+        if (array_key_exists('listen queue len', $fpm)) {
+            $result->add(
+                $section,
+                'Listen Queue Length',
+                $this->formatter->number($queueLen),
+                Status::INFO,
+                'The socket backlog (listen.backlog). Connections arriving once the queue is this deep are '
+                . 'refused outright.'
+            );
+        }
+    }
+
+    /**
+     * What the pool has actually done: "accepted conn", "max children reached",
+     * "slow requests" and "memory peak".
+     *
+     * @param Result $result
+     * @param string $section
+     * @param array $fpm
+     * @return void
+     */
+    private function addFpmWorkRows(Result $result, string $section, array $fpm): void
+    {
         $maxChildren = (int) ($fpm['max children reached'] ?? 0);
         $result->add(
             $section,
@@ -385,6 +556,7 @@ class Php implements CollectorInterface
             $maxChildren > 0 ? Status::WARN : Status::OK,
             'The pool ran out of workers. Raise pm.max_children if memory allows.'
         );
+
         $result->add(
             $section,
             'Slow Requests',
@@ -392,7 +564,28 @@ class Php implements CollectorInterface
             Status::INFO,
             'Counted only when request_slowlog_timeout is set.'
         );
-        $result->add($section, 'Accepted Connections', $this->formatter->number($fpm['accepted conn'] ?? 0));
+
+        $accepted = (float) ($fpm['accepted conn'] ?? 0);
+        $since = (float) ($fpm['start since'] ?? 0);
+        $result->add(
+            $section,
+            'Accepted Connections',
+            $since > 0
+                ? sprintf('%s (%.1f/s)', $this->formatter->number($accepted), $accepted / $since)
+                : $this->formatter->number($accepted),
+            Status::INFO,
+            'Averaged over the whole uptime, not a live rate.'
+        );
+
+        if (array_key_exists('memory peak', $fpm)) {
+            $result->add(
+                $section,
+                'Memory Peak',
+                $this->formatter->bytes($fpm['memory peak']),
+                Status::INFO,
+                'The memory usage peak since FPM started. Reported from PHP 8.1 onwards.'
+            );
+        }
     }
 
     /**

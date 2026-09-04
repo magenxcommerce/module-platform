@@ -4,6 +4,7 @@
 "Turn it on in configuration.","Turn it on in configuration."
 "No tabs are enabled.","No tabs are enabled."
 "Choose which backends to show.","Choose which backends to show."
+"Services","Services"
 "Refresh","Refresh"
 "Loading…","Loading…"
 "Figures are read live from the running services. OPcache values describe the single PHP-FPM worker that answered this request, not the whole pool — the process manager rows below them are pool-wide.","Figures are read live from the running services. OPcache values describe the single PHP-FPM worker that answered this request, not the whole pool — the process manager rows below them are pool-wide."
