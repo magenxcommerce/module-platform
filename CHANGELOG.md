@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.0](https://github.com/magenxcommerce/module-platform/compare/v1.2.0...v1.3.0) (2026-09-04)
+
+
+### Features
+
+* report every OPcache metric and read the MariaDB query cache ([38bfaf3](https://github.com/magenxcommerce/module-platform/commit/38bfaf33d204a34fd728a258f56d49c07778cf22))
+
+
+### Bug Fixes
+
+* Refactor OPcache and add query cache reporting ([#21](https://github.com/magenxcommerce/module-platform/issues/21)) ([38bfaf3](https://github.com/magenxcommerce/module-platform/commit/38bfaf33d204a34fd728a258f56d49c07778cf22))
+
 ## [1.2.0](https://github.com/magenxcommerce/module-platform/compare/v1.1.3...v1.2.0) (2026-09-04)
 
 
