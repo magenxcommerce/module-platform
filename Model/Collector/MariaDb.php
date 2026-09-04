@@ -110,6 +110,7 @@ class MariaDb implements CollectorInterface
         $this->addConnectionRows($result, $globalStatus, $variables);
         $this->addInnoDbRows($result, $globalStatus, $variables);
         $this->addQueryRows($result, $globalStatus, $variables);
+        $this->addQueryCacheRows($result, $globalStatus, $variables);
 
         // The only two slow reads on this tab, sharing one timeout window.
         $this->withStatementTimeout(
@@ -280,6 +281,160 @@ class MariaDb implements CollectorInterface
             Status::INFO,
             'Temporary tables that spilled to disk — the usual cause is a large sort or group by in a report.'
         );
+    }
+
+    /**
+     * The query cache — which on this workload is a thing to have switched off.
+     *
+     * MariaDB still ships it and MySQL removed it in 8.0, so which rows this
+     * builds is decided by what the server publishes rather than by a version
+     * string. Where it exists it is one global mutex in front of every SELECT,
+     * and any write to a table throws away every cached result for that table.
+     * A Magento database writes constantly — quotes, sessions, index and cache
+     * tables — so the cache is emptied about as fast as it fills while every
+     * core queues behind that one lock.
+     *
+     * Hence the shape of these rows: "off" is reported as a healthy state
+     * rather than as an absence, and "on" is a warning that says what to look
+     * at next.
+     *
+     * @param Result $result
+     * @param array $globalStatus
+     * @param array $variables
+     * @return void
+     */
+    private function addQueryCacheRows(Result $result, array $globalStatus, array $variables): void
+    {
+        $section = 'Query Cache';
+
+        if (!array_key_exists('query_cache_type', $variables) && !array_key_exists('query_cache_size', $variables)) {
+            $result->add(
+                $section,
+                'Query Cache',
+                'Not available',
+                Status::OK,
+                'This server has no query cache at all — MySQL removed it in 8.0. Nothing to tune.'
+            );
+
+            return;
+        }
+
+        // "0" and "OFF" are the same setting said two ways, and a type of ON
+        // with a size of zero caches nothing either. DEMAND, which caches only
+        // statements marked SQL_CACHE, still holds the mutex, so it counts as
+        // on.
+        $type = strtoupper(trim((string) ($variables['query_cache_type'] ?? 'OFF')));
+        $size = (float) ($variables['query_cache_size'] ?? 0);
+
+        if ($type === 'OFF' || $type === '0' || $size <= 0) {
+            $result->add(
+                $section,
+                'Query Cache',
+                'Off',
+                Status::OK,
+                sprintf(
+                    'query_cache_type=%s, query_cache_size=%s. Off is the right setting here: the cache '
+                    . 'serialises every SELECT behind one global lock and Magento invalidates it faster '
+                    . 'than it fills.',
+                    $type,
+                    $this->formatter->bytes($size)
+                )
+            );
+
+            return;
+        }
+
+        $result->add(
+            $section,
+            'Query Cache',
+            sprintf('On (query_cache_type=%s)', $type),
+            Status::WARN,
+            'Every SELECT takes a global mutex to look here first, and every write to a table drops all '
+            . 'cached results for that table. On a Magento database that costs throughput on all cores to '
+            . 'serve a cache that is continuously emptied. The rows below say what it is actually buying.'
+        );
+
+        $free = (float) ($globalStatus['Qcache_free_memory'] ?? 0);
+        $result->add(
+            $section,
+            'Memory',
+            $this->formatter->bytesOf($size - $free, $size),
+            Status::INFO,
+            'Against query_cache_size.'
+        );
+
+        // Hits against hits plus the selects that had to be executed. Com_select
+        // counts only the statements that missed, so the two together are the
+        // reads the cache was asked about.
+        $hits = (float) ($globalStatus['Qcache_hits'] ?? 0);
+        $selects = (float) ($globalStatus['Com_select'] ?? 0);
+        $result->add(
+            $section,
+            'Hit Rate',
+            sprintf(
+                '%s (%s hits, %s executed)',
+                $this->formatter->percent($this->formatter->ratio($hits, $hits + $selects), 2),
+                $this->formatter->number($hits),
+                $this->formatter->number($selects)
+            ),
+            Status::INFO,
+            'A low rate means the mutex is being paid for on every read and almost nothing is coming back '
+            . 'from the cache.'
+        );
+
+        $result->add(
+            $section,
+            'Cached Queries',
+            $this->formatter->number($globalStatus['Qcache_queries_in_cache'] ?? 0),
+            Status::INFO,
+            'Result sets held right now.'
+        );
+        $result->add(
+            $section,
+            'Inserts',
+            $this->formatter->number($globalStatus['Qcache_inserts'] ?? 0),
+            Status::INFO,
+            'Result sets stored since the server started.'
+        );
+        $result->add(
+            $section,
+            'Not Cached',
+            $this->formatter->number($globalStatus['Qcache_not_cached'] ?? 0),
+            Status::INFO,
+            sprintf(
+                'SELECTs the cache would not take — a non-deterministic function, a temporary table, or a '
+                . 'result larger than query_cache_limit (%s).',
+                $this->formatter->bytes($variables['query_cache_limit'] ?? 0)
+            )
+        );
+
+        $prunes = (float) ($globalStatus['Qcache_lowmem_prunes'] ?? 0);
+        $result->add(
+            $section,
+            'Low-memory Prunes',
+            $this->formatter->number($prunes),
+            $prunes > 0 ? Status::WARN : Status::OK,
+            'Results evicted to make room for newer ones. Either the cache is too small for the traffic or '
+            . 'it is too fragmented to reuse what it has freed.'
+        );
+
+        $freeBlocks = (float) ($globalStatus['Qcache_free_blocks'] ?? 0);
+        $totalBlocks = (float) ($globalStatus['Qcache_total_blocks'] ?? 0);
+        if ($totalBlocks > 0) {
+            $result->add(
+                $section,
+                'Free Blocks',
+                sprintf(
+                    '%s of %s (%s)',
+                    $this->formatter->number($freeBlocks),
+                    $this->formatter->number($totalBlocks),
+                    $this->formatter->percent($this->formatter->ratio($freeBlocks, $totalBlocks))
+                ),
+                Status::INFO,
+                'Many free blocks against few total is a fragmented cache; FLUSH QUERY CACHE defragments it '
+                . 'without emptying it.'
+            );
+        }
     }
 
     /**

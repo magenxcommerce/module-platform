@@ -31,11 +31,11 @@ log line.
 
 | Tab | Source | The lines that matter |
 |---|---|---|
-| **MariaDB** | `ResourceConnection`, `SHOW GLOBAL STATUS` / `VARIABLES`, one `information_schema` pass, `performance_schema` statement digests | Threads connected against `max_connections`; InnoDB buffer pool hit rate; connections refused because the server was full; slow queries; schema size and the five largest tables; the top five statements by call count and by total time |
+| **MariaDB** | `ResourceConnection`, `SHOW GLOBAL STATUS` / `VARIABLES`, one `information_schema` pass, `performance_schema` statement digests | Threads connected against `max_connections`; InnoDB buffer pool hit rate; connections refused because the server was full; slow queries; the query cache — off, absent, or on with its memory, hit rate, prunes and fragmentation; schema size and the five largest tables; the top five statements by call count and by total time |
 | **Redis** | `\Credis_Client` against each configured instance (default cache, page cache, sessions) | Memory against `maxmemory`, eviction policy, evicted keys, hit rate, key count, last background save |
 | **RabbitMQ** | HTTP management API | Node alarms, memory and disk headroom, and per-queue depth against consumer count |
 | **OpenSearch** | HTTP, engine derived from `catalog/search/engine` | Cluster colour, unassigned shards, JVM heap with committed size and the young/old generation pools, old-generation GC counters, node disk, the store's own indices with doc counts, and which credentials the search configuration resolved to |
-| **PHP / FPM** | `opcache_get_status()` and friends in-process, plus the php-fpm status page | OPcache memory and cached keys, missing required extensions and missing recommended ones (`redis`, `igbinary`), every field the FPM status page publishes — pool, process manager, start time and uptime, accepted connections with their average rate, the listen queue live and at its high-water mark against the socket backlog, idle/active/total and peak-active processes, `max children reached`, slow requests and memory peak — plus host load and disk |
+| **PHP / FPM** | `opcache_get_status()` and friends in-process, plus the php-fpm status page | Every block OPcache publishes — memory and free memory, wasted memory against the percentage it restarts at, the `cache_full` flag, the interned string buffer, cached scripts and cached keys, hit rate with the counters behind it, blacklist misses, the three restart causes counted separately, a restart in flight, when the cache started and last emptied, JIT and its buffer, and preloading — missing required extensions and missing recommended ones (`redis`, `igbinary`), every field the FPM status page publishes — pool, process manager, start time and uptime, accepted connections with their average rate, the listen queue live and at its high-water mark against the socket backlog, idle/active/total and peak-active processes, `max children reached`, slow requests and memory peak — plus host load and disk |
 | **Nginx** | `stub_status` | Active connections, dropped connections, requests per connection, worker read/write/wait state. The endpoint URL rides in the tab's summary line rather than a card of its own |
 | **imgproxy** | Prometheus `/metrics` | Error rate and errors split by type, 5xx share of requests, worker utilization, the queue/downloading/processing spans — which separate a saturated imgproxy from a slow origin from an expensive image — and libvips memory against its peak |
 
@@ -233,6 +233,24 @@ silently reverting.
   `Zend OPcache`, and `extension_loaded('opcache')` is therefore `false` on a server that
   very much has it. The PHP tab checks every name PHP might have registered, so it no
   longer reports OPcache missing on a healthy box.
+- **OPcache's limits are three separate ceilings, not one.** `opcache.memory_consumption`,
+  `opcache.max_accelerated_files` and `opcache.interned_strings_buffer` fill independently,
+  and each has its own restart counter — out-of-memory, hash, manual. A Magento install
+  usually reaches the interned string buffer first, and it fills silently: nothing errors,
+  class and method names simply stop being shared between scripts. All three are measured
+  rows on the PHP tab for that reason, and the restart counters are never rolled into one
+  number, since a sizing problem and a deploy would then read the same.
+- **Wasted OPcache memory is read against `opcache.max_wasted_percentage`,** not against
+  zero. Waste is normal on a running cache; what matters is that crossing that percentage
+  makes OPcache throw the whole cache away and recompile from cold. The row prints the
+  threshold beside the figure so the distance to it is visible.
+- **A query cache that is off is the healthy reading.** MariaDB still ships one and MySQL
+  removed it in 8.0. Where it exists it puts one global mutex in front of every `SELECT`,
+  and any write to a table drops every cached result for that table — so on a Magento
+  database, which writes constantly, it costs throughput on every core to serve a cache
+  that is being emptied as fast as it fills. The tab reports `query_cache_type=OFF` as a
+  healthy state, says "Not available" where the server has no such thing, and warns when it
+  is on — `DEMAND` included, since that still takes the mutex.
 - **A search password is usually not encrypted.** Saved through the admin form it goes
   through the `Encrypted` backend model; written straight into `core_config_data` or
   locked into `app/etc/env.php` by deployment tooling — the normal case on this stack —

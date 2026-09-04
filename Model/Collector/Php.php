@@ -37,6 +37,12 @@ class Php implements CollectorInterface
     private const OPCACHE_KEYS_WARN_PCT = 85.0;
     private const OPCACHE_KEYS_ERROR_PCT = 95.0;
 
+    private const OPCACHE_INTERNED_WARN_PCT = 85.0;
+    private const OPCACHE_INTERNED_ERROR_PCT = 95.0;
+
+    /** PHP's own default for opcache.max_wasted_percentage, used when the directive cannot be read. */
+    private const OPCACHE_MAX_WASTED_PCT_DEFAULT = 5.0;
+
     private const DISK_USED_WARN_PCT = 80.0;
     private const DISK_USED_ERROR_PCT = 90.0;
 
@@ -231,6 +237,18 @@ class Php implements CollectorInterface
     }
 
     /**
+     * Everything opcache_get_status() publishes about this worker's cache.
+     *
+     * The call is made once and handed to the builders below, which is what
+     * makes them testable: each one takes the decoded array and nothing else.
+     *
+     * A field that OPcache always publishes is defaulted with ??, because zero
+     * really is the measurement on a cache that has just started. A block that
+     * only exists on some builds — "jit" arrived in PHP 8.0, and
+     * "preload_statistics" is only there when preloading is configured — is
+     * gated on its presence instead, so an older or leaner build omits the rows
+     * rather than reporting a zero that reads as a measurement.
+     *
      * @param Result $result
      * @return void
      */
@@ -251,14 +269,40 @@ class Php implements CollectorInterface
             return;
         }
 
-        $memory = $opcache['memory_usage'] ?? [];
-        $statistics = $opcache['opcache_statistics'] ?? [];
+        $result->add($section, 'Enabled', 'Yes', Status::OK);
+
+        $this->addOpcacheMemoryRows($result, $section, $opcache, $this->opcacheMaxWastedPercentage());
+        $this->addOpcacheInternedStringRows($result, $section, $opcache);
+        $this->addOpcacheScriptRows($result, $section, $opcache);
+        $this->addOpcacheRestartRows($result, $section, $opcache);
+        $this->addOpcacheJitRows($result, $section, $opcache);
+        $this->addOpcachePreloadRows($result, $section, $opcache);
+    }
+
+    /**
+     * The "memory_usage" block, plus the cache_full flag it explains.
+     *
+     * Wasted memory is measured against opcache.max_wasted_percentage rather
+     * than against zero: some waste is normal on a running cache, and the
+     * number only matters as it approaches the point where OPcache throws the
+     * whole cache away to reclaim it.
+     *
+     * @param Result $result
+     * @param string $section
+     * @param array $opcache
+     * @param float $maxWastedPct
+     * @return void
+     */
+    private function addOpcacheMemoryRows(Result $result, string $section, array $opcache, float $maxWastedPct): void
+    {
+        $memory = is_array($opcache['memory_usage'] ?? null) ? $opcache['memory_usage'] : [];
 
         $used = (float) ($memory['used_memory'] ?? 0);
-        $total = $used + (float) ($memory['free_memory'] ?? 0) + (float) ($memory['wasted_memory'] ?? 0);
+        $free = (float) ($memory['free_memory'] ?? 0);
+        $wasted = (float) ($memory['wasted_memory'] ?? 0);
+        $total = $used + $free + $wasted;
         $usedPct = $this->formatter->ratio($used, $total);
 
-        $result->add($section, 'Enabled', 'Yes', Status::OK);
         $result->add(
             $section,
             'Memory',
@@ -268,11 +312,116 @@ class Php implements CollectorInterface
         );
         $result->add(
             $section,
-            'Wasted Memory',
-            $this->formatter->bytes($memory['wasted_memory'] ?? 0),
+            'Free Memory',
+            $this->formatter->bytes($free),
             Status::INFO,
-            'Reclaimed only by a restart.'
+            'What is left for scripts this worker has not compiled yet.'
         );
+
+        // OPcache publishes the percentage itself; it is recomputed only on a
+        // build that does not.
+        $wastedPct = isset($memory['current_wasted_percentage'])
+            ? (float) $memory['current_wasted_percentage']
+            : $this->formatter->ratio($wasted, $total);
+
+        $result->add(
+            $section,
+            'Wasted Memory',
+            sprintf(
+                '%s (%s, restarts at %s)',
+                $this->formatter->bytes($wasted),
+                $this->formatter->percent($wastedPct, 2),
+                $this->formatter->percent($maxWastedPct, 0)
+            ),
+            $wastedPct >= $maxWastedPct ? Status::WARN : Status::OK,
+            'Memory held by scripts that have since been replaced. It is reclaimed only by a restart, and '
+            . 'OPcache forces one the moment it passes opcache.max_wasted_percentage.'
+        );
+
+        if (array_key_exists('cache_full', $opcache)) {
+            $full = !empty($opcache['cache_full']);
+            $result->add(
+                $section,
+                'Cache Full',
+                $full ? 'Yes' : 'No',
+                $full ? Status::ERROR : Status::OK,
+                'Set when OPcache had nowhere to put a new script — memory or the key table filled. Nothing '
+                . 'compiled after that point is cached at all, so those files are recompiled on every request.'
+            );
+        }
+    }
+
+    /**
+     * The "interned_strings_usage" block.
+     *
+     * Its own buffer, sized by its own directive, and the one OPcache limit a
+     * Magento install reaches first: every class, method and property name in
+     * the generated code is interned once and shared, and the default buffer
+     * was not sized for a codebase this shape. It fills silently — the strings
+     * simply stop being shared — so it is worth a measured row rather than a
+     * reported one.
+     *
+     * @param Result $result
+     * @param string $section
+     * @param array $opcache
+     * @return void
+     */
+    private function addOpcacheInternedStringRows(Result $result, string $section, array $opcache): void
+    {
+        $interned = is_array($opcache['interned_strings_usage'] ?? null) ? $opcache['interned_strings_usage'] : [];
+        if ($interned === []) {
+            return;
+        }
+
+        $buffer = (float) ($interned['buffer_size'] ?? 0);
+        if ($buffer > 0) {
+            $used = (float) ($interned['used_memory'] ?? 0);
+            $usedPct = $this->formatter->ratio($used, $buffer);
+
+            $result->add(
+                $section,
+                'Interned Strings',
+                $this->formatter->bytesOf($used, $buffer),
+                $this->status->forCeiling($usedPct, self::OPCACHE_INTERNED_WARN_PCT, self::OPCACHE_INTERNED_ERROR_PCT),
+                'Against opcache.interned_strings_buffer. Magento fills the default; a full buffer stops new '
+                . 'class and method names being shared between scripts and costs memory in every worker.'
+            );
+        }
+
+        if (array_key_exists('number_of_strings', $interned)) {
+            $result->add(
+                $section,
+                'Interned String Count',
+                $this->formatter->number($interned['number_of_strings']),
+                Status::INFO,
+                'Distinct strings held in that buffer.'
+            );
+        }
+    }
+
+    /**
+     * What the cache holds and how often it answers: "num_cached_scripts",
+     * "num_cached_keys" against "max_cached_keys", the hit counters and the
+     * blacklist counters.
+     *
+     * @param Result $result
+     * @param string $section
+     * @param array $opcache
+     * @return void
+     */
+    private function addOpcacheScriptRows(Result $result, string $section, array $opcache): void
+    {
+        $statistics = is_array($opcache['opcache_statistics'] ?? null) ? $opcache['opcache_statistics'] : [];
+
+        if (array_key_exists('num_cached_scripts', $statistics)) {
+            $result->add(
+                $section,
+                'Cached Scripts',
+                $this->formatter->number($statistics['num_cached_scripts']),
+                Status::INFO,
+                'PHP files this worker has compiled and kept.'
+            );
+        }
 
         $keys = (float) ($statistics['num_cached_keys'] ?? 0);
         $maxKeys = (float) ($statistics['max_cached_keys'] ?? 0);
@@ -283,30 +432,262 @@ class Php implements CollectorInterface
                 'Cached Keys',
                 sprintf('%s / %s (%s)', $this->formatter->number($keys), $this->formatter->number($maxKeys), $this->formatter->percent($keysPct)),
                 $this->status->forCeiling($keysPct, self::OPCACHE_KEYS_WARN_PCT, self::OPCACHE_KEYS_ERROR_PCT),
-                'Against opcache.max_accelerated_files. Magento needs a high five-figure value.'
+                'Against opcache.max_accelerated_files. A key is spent on every path a script is reached by, '
+                . 'not only on the script, so this sits above the script count. Magento needs a high '
+                . 'five-figure value.'
             );
         }
 
         $hits = (float) ($statistics['hits'] ?? 0);
         $misses = (float) ($statistics['misses'] ?? 0);
         if ($hits + $misses > 0) {
+            // OPcache publishes the rate; it is recomputed only on a build that
+            // does not.
+            $hitRate = isset($statistics['opcache_hit_rate'])
+                ? (float) $statistics['opcache_hit_rate']
+                : $this->formatter->ratio($hits, $hits + $misses);
+
             $result->add(
                 $section,
                 'Hit Rate',
-                $this->formatter->percent($this->formatter->ratio($hits, $hits + $misses), 2),
+                sprintf(
+                    '%s (%s hits, %s misses)',
+                    $this->formatter->percent($hitRate, 2),
+                    $this->formatter->number($hits),
+                    $this->formatter->number($misses)
+                ),
                 Status::INFO,
                 'Low right after a deploy is expected; low hours later is not.'
             );
         }
 
-        $restarts = (int) ($statistics['oom_restarts'] ?? 0);
+        if (array_key_exists('blacklist_misses', $statistics)) {
+            $result->add(
+                $section,
+                'Blacklist Misses',
+                sprintf(
+                    '%s (%s of misses)',
+                    $this->formatter->number($statistics['blacklist_misses']),
+                    $this->formatter->percent((float) ($statistics['blacklist_miss_ratio'] ?? 0), 2)
+                ),
+                Status::INFO,
+                'Files never cached because they match opcache.blacklist_filename. Zero unless that is set.'
+            );
+        }
+    }
+
+    /**
+     * Restarts: the three counters OPcache keeps for them, the state of one in
+     * flight, and when this cache was last emptied.
+     *
+     * The counters are separate because their causes are: an out-of-memory
+     * restart says the memory is too small, a hash restart says the key table
+     * is, and a manual one says something called opcache_reset(). Rolling them
+     * into a single "restarts" number is how a sizing problem gets read as a
+     * deploy.
+     *
+     * @param Result $result
+     * @param string $section
+     * @param array $opcache
+     * @return void
+     */
+    private function addOpcacheRestartRows(Result $result, string $section, array $opcache): void
+    {
+        $statistics = is_array($opcache['opcache_statistics'] ?? null) ? $opcache['opcache_statistics'] : [];
+
+        $oomRestarts = (int) ($statistics['oom_restarts'] ?? 0);
         $result->add(
             $section,
             'Out-of-memory Restarts',
-            $this->formatter->number($restarts),
-            $restarts > 0 ? Status::WARN : Status::OK,
-            'Each one throws away every compiled class in this worker.'
+            $this->formatter->number($oomRestarts),
+            $oomRestarts > 0 ? Status::WARN : Status::OK,
+            'Each one throws away every compiled class in this worker. Raise opcache.memory_consumption.'
         );
+
+        $hashRestarts = (int) ($statistics['hash_restarts'] ?? 0);
+        $result->add(
+            $section,
+            'Hash Restarts',
+            $this->formatter->number($hashRestarts),
+            $hashRestarts > 0 ? Status::WARN : Status::OK,
+            'The key table filled before the memory did. Raise opcache.max_accelerated_files.'
+        );
+
+        $result->add(
+            $section,
+            'Manual Restarts',
+            $this->formatter->number($statistics['manual_restarts'] ?? 0),
+            Status::INFO,
+            'opcache_reset() calls. A deploy usually accounts for these.'
+        );
+
+        if (array_key_exists('restart_pending', $opcache) || array_key_exists('restart_in_progress', $opcache)) {
+            $pending = !empty($opcache['restart_pending']);
+            $inProgress = !empty($opcache['restart_in_progress']);
+
+            $result->add(
+                $section,
+                'Restart',
+                $inProgress ? 'In progress' : ($pending ? 'Pending' : 'No'),
+                $pending || $inProgress ? Status::WARN : Status::OK,
+                'Pending means OPcache is waiting for the requests still holding the old cache to finish. '
+                . 'Until the restart completes and the cache warms again, every request is recompiling.'
+            );
+        }
+
+        $startTime = (int) ($statistics['start_time'] ?? 0);
+        if ($startTime > 0) {
+            $result->add(
+                $section,
+                'Cache Started',
+                $this->formatUtcTime($startTime, true),
+                Status::INFO,
+                'When this worker\'s cache was created — which is when the worker started, not when FPM did.'
+            );
+        }
+
+        if (array_key_exists('last_restart_time', $statistics)) {
+            $lastRestart = (int) $statistics['last_restart_time'];
+            $result->add(
+                $section,
+                'Last Restart',
+                $lastRestart > 0 ? $this->formatUtcTime($lastRestart, true) : 'Never',
+                Status::INFO,
+                'The last time the whole cache was emptied, by a reset or by running out of room.'
+            );
+        }
+    }
+
+    /**
+     * The "jit" block, on a PHP 8 build that has it.
+     *
+     * Reported rather than judged. JIT buys little on a Magento request — the
+     * time goes to I/O, to the object manager and to string work, not to
+     * arithmetic — so neither having it on nor having it off is a fault, and
+     * the only number here that can bite is a buffer that has filled.
+     *
+     * @param Result $result
+     * @param string $section
+     * @param array $opcache
+     * @return void
+     */
+    private function addOpcacheJitRows(Result $result, string $section, array $opcache): void
+    {
+        $jit = is_array($opcache['jit'] ?? null) ? $opcache['jit'] : [];
+        if ($jit === []) {
+            return;
+        }
+
+        if (empty($jit['enabled'])) {
+            $result->add(
+                $section,
+                'JIT',
+                'Not enabled',
+                Status::INFO,
+                'opcache.jit_buffer_size is zero or this build has no JIT. Magento does not need it.'
+            );
+
+            return;
+        }
+
+        $result->add(
+            $section,
+            'JIT',
+            empty($jit['on'])
+                ? 'Enabled, not running'
+                : sprintf('On (kind %d, opt level %d)', (int) ($jit['kind'] ?? 0), (int) ($jit['opt_level'] ?? 0)),
+            Status::INFO,
+            'The two digits are the trigger and optimisation level from opcache.jit.'
+        );
+
+        $buffer = (float) ($jit['buffer_size'] ?? 0);
+        if ($buffer > 0) {
+            $free = (float) ($jit['buffer_free'] ?? 0);
+            $result->add(
+                $section,
+                'JIT Buffer',
+                $this->formatter->bytesOf($buffer - $free, $buffer),
+                Status::INFO,
+                'opcache.jit_buffer_size. Once it is full nothing new is compiled; it is not reclaimed '
+                . 'without a restart.'
+            );
+        }
+    }
+
+    /**
+     * The "preload_statistics" block, present only when opcache.preload is set.
+     *
+     * @param Result $result
+     * @param string $section
+     * @param array $opcache
+     * @return void
+     */
+    private function addOpcachePreloadRows(Result $result, string $section, array $opcache): void
+    {
+        $preload = is_array($opcache['preload_statistics'] ?? null) ? $opcache['preload_statistics'] : [];
+        if ($preload === []) {
+            return;
+        }
+
+        $result->add(
+            $section,
+            'Preloaded',
+            sprintf(
+                '%s scripts, %s functions, %s classes',
+                $this->formatter->number(is_array($preload['scripts'] ?? null) ? count($preload['scripts']) : 0),
+                $this->formatter->number(is_array($preload['functions'] ?? null) ? count($preload['functions']) : 0),
+                $this->formatter->number(is_array($preload['classes'] ?? null) ? count($preload['classes']) : 0)
+            ),
+            Status::INFO,
+            'Linked into the parent process at startup and shared by every worker. Changing what is '
+            . 'preloaded needs a full FPM restart, not an opcache_reset().'
+        );
+
+        if (array_key_exists('memory_consumption', $preload)) {
+            $result->add(
+                $section,
+                'Preload Memory',
+                $this->formatter->bytes($preload['memory_consumption']),
+                Status::INFO,
+                'Taken out of opcache.memory_consumption before the cache above gets any of it.'
+            );
+        }
+    }
+
+    /**
+     * opcache.max_wasted_percentage, as a percentage.
+     *
+     * Read from the directive rather than assumed, because the number is the
+     * threshold OPcache will actually restart at. The constant stands in only
+     * when the directive cannot be read at all, and carries PHP's own default.
+     *
+     * @return float
+     */
+    private function opcacheMaxWastedPercentage(): float
+    {
+        $configured = ini_get('opcache.max_wasted_percentage');
+
+        return is_numeric($configured) && (float) $configured > 0
+            ? (float) $configured
+            : self::OPCACHE_MAX_WASTED_PCT_DEFAULT;
+    }
+
+    /**
+     * A Unix timestamp as UTC, to match every other time on this dashboard
+     * rather than whatever zone the host is set to.
+     *
+     * @param int $timestamp
+     * @param bool $withElapsed Append how long ago that was.
+     * @return string
+     */
+    private function formatUtcTime(int $timestamp, bool $withElapsed = false): string
+    {
+        $formatted = gmdate('Y-m-d H:i:s', $timestamp) . ' UTC';
+        if (!$withElapsed) {
+            return $formatted;
+        }
+
+        return $formatted . sprintf(' (%s ago)', $this->formatter->duration(max(0, time() - $timestamp)));
     }
 
     /**
