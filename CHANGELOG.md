@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/magenxcommerce/module-platform/compare/v1.1.3...v1.2.0) (2026-09-04)
+
+
+### Features
+
+* move the tab strip into the admin's left-hand nav and read every FPM field ([d6cec27](https://github.com/magenxcommerce/module-platform/commit/d6cec2712146757dfda98da550cc27e7fa2a2c40))
+
+
+### Bug Fixes
+
+* Refactor FPM status display with improved row builders and layout ([#19](https://github.com/magenxcommerce/module-platform/issues/19)) ([d6cec27](https://github.com/magenxcommerce/module-platform/commit/d6cec2712146757dfda98da550cc27e7fa2a2c40))
+
 ## [1.1.3](https://github.com/magenxcommerce/module-platform/compare/v1.1.2...v1.1.3) (2026-09-03)
 
 
