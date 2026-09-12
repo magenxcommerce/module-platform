@@ -93,33 +93,17 @@ class Result
     }
 
     /**
-     * @return string
-     */
-    public function getStatus(): string
-    {
-        if ($this->overrideStatus !== null) {
-            return $this->overrideStatus;
-        }
-
-        $status = Status::INFO;
-        foreach ($this->sections as $rows) {
-            foreach ($rows as $row) {
-                $status = $this->status->worst($status, $row->getStatus());
-            }
-        }
-
-        return $status;
-    }
-
-    /**
      * @return array
      */
     public function toArray(): array
     {
         // One walk, not two. A section's status is the worst of its rows and the
         // tab's is the worst of its sections, so rolling both up here costs the
-        // same pass the rows are serialized in — getStatus() would repeat the
-        // whole nested walk to reach the same answer.
+        // same pass the rows are serialized in. It is also the ONLY place the
+        // rollup lives, deliberately: a separate accessor that walked the
+        // sections again to answer the same question would be a second copy of
+        // this logic, free to drift from what the tab actually renders, and
+        // reachable by nobody — the payload is what the endpoint returns.
         $sections = [];
         $worst = Status::INFO;
 

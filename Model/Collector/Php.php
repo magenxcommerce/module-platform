@@ -155,6 +155,11 @@ class Php implements CollectorInterface
     private Status $status;
 
     /**
+     * @var array{user: string, uid: int|null, home: string}|null
+     */
+    private ?array $effectiveUser = null;
+
+    /**
      * @param StatusFetcher $fetcher
      * @param Config $config
      * @param Json $json
@@ -1445,14 +1450,24 @@ class Php implements CollectorInterface
      * entry therefore has no home here, and the readability probe walks the
      * Magento root alone.
      *
+     * Memoized: the filesystem and the cron probes both need it, and the answer
+     * cannot change inside one request. Without this the same /proc/self/status
+     * and /etc/passwd are read twice — twelve filesystem operations for six
+     * operations' worth of answer, since contentsOf() stats each file for
+     * existence and readability before opening it.
+     *
      * @return array{user: string, uid: int|null, home: string}
      */
     private function effectiveUser(): array
     {
+        if ($this->effectiveUser !== null) {
+            return $this->effectiveUser;
+        }
+
         $uid = $this->effectiveUid();
         $entry = $uid === null ? [] : $this->passwdEntry($uid);
 
-        return [
+        return $this->effectiveUser = [
             'user' => (string) ($entry['name'] ?? ''),
             'uid' => $uid,
             'home' => (string) ($entry['home'] ?? ''),
@@ -1727,7 +1742,16 @@ class Php implements CollectorInterface
             }
         }
 
-        $this->addDiskRow($result, $section, 'Magento var/', $this->directoryList->getPath(DirectoryList::VAR_DIR));
+        // pathFor(), like every other DirectoryList read in this class: getPath()
+        // throws for a code this Magento does not register, and an uncaught
+        // throw here would cost the tab every Runtime, OPcache, FPM and
+        // Hardening row already built — CollectorRunner discards the whole
+        // Result and renders "unavailable". A missing path is worth one absent
+        // row, not the tab.
+        $var = $this->pathFor(DirectoryList::VAR_DIR);
+        if ($var !== '') {
+            $this->addDiskRow($result, $section, 'Magento var/', $var);
+        }
         $this->addDiskRow($result, $section, 'Root Filesystem', '/');
     }
 

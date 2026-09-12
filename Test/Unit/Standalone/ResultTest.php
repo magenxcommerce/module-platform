@@ -98,20 +98,38 @@ class ResultTest extends TestCase
         $this->assertSame(Status::INFO, $payload['status']);
     }
 
-    public function testToArrayAgreesWithGetStatus(): void
+    public function testToArrayRollsRowsUpThroughSectionsIntoTheTab(): void
     {
-        // toArray() rolls the status up in the same pass it serializes the rows
-        // rather than calling getStatus(), so the two must not drift.
+        // toArray() rolls the status up in the same pass it serializes the rows,
+        // and it is the only place that rollup lives — a second implementation
+        // to cross-check it against is a second implementation to keep in step.
+        // So this pins the answer itself: the tab takes the worst of its
+        // sections, and each section the worst of its rows.
         $result = $this->newResult();
         $result->add('A', 'row', 'value', Status::OK);
         $result->add('A', 'row', 'value', Status::WARN);
         $result->add('B', 'row', 'value', Status::INFO);
 
-        $this->assertSame($result->getStatus(), $result->toArray()['status']);
+        $payload = $result->toArray();
 
+        $this->assertSame(Status::WARN, $payload['sections'][0]['status']);
+        $this->assertSame(Status::INFO, $payload['sections'][1]['status']);
+        $this->assertSame(Status::WARN, $payload['status']);
+    }
+
+    public function testAnOverrideBeatsTheRowsItIsSetOver(): void
+    {
+        // A collector that could not reach its backend says so outright, and
+        // that verdict has to survive whatever rows it managed to add first.
+        $result = $this->newResult();
+        $result->add('A', 'row', 'value', Status::WARN);
         $result->setStatus(Status::ERROR);
 
-        $this->assertSame($result->getStatus(), $result->toArray()['status']);
+        $payload = $result->toArray();
+
+        $this->assertSame(Status::ERROR, $payload['status']);
+        // Only the tab is overridden; the section still reports what it measured.
+        $this->assertSame(Status::WARN, $payload['sections'][0]['status']);
     }
 
     public function testRowsCarryTheirLabelValueStatusAndHint(): void

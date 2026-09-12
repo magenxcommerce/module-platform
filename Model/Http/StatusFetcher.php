@@ -118,6 +118,12 @@ class StatusFetcher
      */
     public function redact(string $url): string
     {
-        return (string) preg_replace('#://[^/@\s]*@#', '://', $url);
+        // Greedy up to the LAST "@" before the path, because that is the one
+        // curl splits on: in http://user:p@ssw0rd@host a lazy class stops at
+        // the first "@" and hands back http://ssw0rd@host — publishing most of
+        // the password while curl authenticates with all of it. Excluding "/"
+        // is what keeps the match inside the authority, so an "@" in a path or
+        // query is still left alone.
+        return (string) preg_replace('#://[^/\s]*@#', '://', $url);
     }
 }

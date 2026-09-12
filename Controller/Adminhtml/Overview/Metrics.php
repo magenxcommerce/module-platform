@@ -71,7 +71,13 @@ class Metrics extends Action implements HttpGetActionInterface
         $result->setHeader('Cache-Control', 'no-store, no-cache, must-revalidate', true);
         $result->setHeader('Pragma', 'no-cache', true);
 
-        $code = (string) $this->getRequest()->getParam('collector', '');
+        // Not a bare (string) cast: ?collector[]=mariadb hands back an array,
+        // and casting one raises "Array to string conversion" — log noise on
+        // every crafted request, and Magento's error handler promotes warnings
+        // to exceptions in developer mode, so it costs a 500 there. All for a
+        // parameter that the pool lookup below is about to reject anyway.
+        $code = $this->getRequest()->getParam('collector', '');
+        $code = is_string($code) ? $code : '';
 
         if (!$this->config->isEnabled()) {
             return $result->setData(

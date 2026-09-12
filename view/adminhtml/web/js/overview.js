@@ -226,7 +226,7 @@ define(['mage/translate'], function ($t) {
             });
 
             if (moveFocus) {
-                tabButton.focus();
+                tabLink.focus();
             }
         }
 

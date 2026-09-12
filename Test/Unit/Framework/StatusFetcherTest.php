@@ -91,6 +91,11 @@ class StatusFetcherTest extends TestCase
             // The pattern must not cross a slash, or an @ in the path would
             // take the host with it.
             'an at sign in the path is left alone' => ['http://nginx/a@b', 'http://nginx/a@b'],
+            // curl splits the authority on the LAST "@", so the redaction has
+            // to as well — stopping at the first one publishes the tail of the
+            // password while curl still authenticates with the whole of it.
+            'an at sign in the password' => ['http://user:p@ssw0rd@nginx/s', 'http://nginx/s'],
+            'several at signs in the password' => ['https://u:a@b@c@rabbitmq:15672', 'https://rabbitmq:15672'],
             'port survives' => ['http://user:pass@imgproxy:4594/metrics', 'http://imgproxy:4594/metrics'],
             'https' => ['https://user:pass@rabbitmq:15672', 'https://rabbitmq:15672'],
         ];
