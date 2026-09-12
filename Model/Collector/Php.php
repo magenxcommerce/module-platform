@@ -1150,7 +1150,7 @@ class Php implements CollectorInterface
         $readable = [];
 
         foreach ($children as $child) {
-            if ($this->matchesAny(basename($child), self::UNREADABLE_ROOT_PATTERNS)) {
+            if ($this->matchesAny($this->baseName($child), self::UNREADABLE_ROOT_PATTERNS)) {
                 $readable[$this->label($this->relativeTo($root, $child), $child)] = $this->isReadablePath($child);
             }
         }
@@ -1163,10 +1163,10 @@ class Php implements CollectorInterface
 
         $inHome = [];
         foreach ($this->childrenOf($home) as $entry) {
-            if ($this->matchesAny(basename($entry), self::UNREADABLE_HOME_PATTERNS)) {
+            if ($this->matchesAny($this->baseName($entry), self::UNREADABLE_HOME_PATTERNS)) {
                 // Labelled by the shell's own shorthand, so the row says where
                 // the entry is without repeating the home path on each one.
-                $inHome[$this->label('~/' . basename($entry), $entry)] = $this->isReadablePath($entry);
+                $inHome[$this->label('~/' . $this->baseName($entry), $entry)] = $this->isReadablePath($entry);
             }
         }
         ksort($inHome);
@@ -1275,10 +1275,7 @@ class Php implements CollectorInterface
 
         $crontab = '';
         foreach (self::CRON_BINARIES as $candidate) {
-            // No driver equivalent for the executable bit, and the value is the
-            // whole point of the row: a crontab that cannot be executed is not
-            // a way in.
-            if ($this->pathExists($candidate) && is_executable($candidate)) {
+            if ($this->isExecutableFile($candidate)) {
                 $crontab = $candidate;
                 break;
             }
@@ -1416,13 +1413,8 @@ class Php implements CollectorInterface
      */
     private function readUserList(string $path): ?array
     {
-        try {
-            if (!$this->filesystemDriver->isExists($path) || !$this->filesystemDriver->isReadable($path)) {
-                return null;
-            }
-
-            $contents = (string) $this->filesystemDriver->fileGetContents($path);
-        } catch (FileSystemException) {
+        $contents = $this->contentsOf($path);
+        if ($contents === null) {
             return null;
         }
 
@@ -1440,35 +1432,127 @@ class Php implements CollectorInterface
     /**
      * The user this process actually runs as.
      *
-     * posix is the only source that gives the uid, and the uid is what says
-     * root. Without ext-posix the name still comes back and the uid row simply
-     * reports what it has.
+     * Read from /proc and /etc/passwd rather than from the posix extension:
+     * ext-posix is not always built into a PHP image, and the Magento coding
+     * standard discourages its functions anyway. Both files are read through
+     * the filesystem driver like everything else here, so a container without
+     * /proc simply yields no uid and the row that needs one is left out.
      *
-     * The home directory comes from the passwd entry rather than from HOME,
-     * which FPM does not set by default and which a deploy script may have left
-     * pointing somewhere else entirely; HOME is the fallback for a build with
-     * no posix.
+     * The home directory comes from the passwd entry rather than from the
+     * environment, which FPM does not populate by default; HOME is the fallback
+     * for a host that has no passwd entry for this uid at all.
      *
      * @return array{user: string, uid: int|null, home: string}
      */
     private function effectiveUser(): array
     {
-        if (function_exists('posix_geteuid')) {
-            $uid = posix_geteuid();
-            $name = '';
-            $home = '';
-            if (function_exists('posix_getpwuid')) {
-                $entry = posix_getpwuid($uid);
-                if (is_array($entry)) {
-                    $name = (string) ($entry['name'] ?? '');
-                    $home = (string) ($entry['dir'] ?? '');
-                }
-            }
+        $uid = $this->effectiveUid();
+        $entry = $uid === null ? [] : $this->passwdEntry($uid);
+        $home = (string) ($entry['home'] ?? '');
 
-            return ['user' => $name, 'uid' => $uid, 'home' => $home !== '' ? $home : (string) getenv('HOME')];
+        return [
+            'user' => (string) ($entry['name'] ?? ''),
+            'uid' => $uid,
+            'home' => $home !== '' ? $home : (string) ($_SERVER['HOME'] ?? ''),
+        ];
+    }
+
+    /**
+     * The effective uid, from the second field of /proc/self/status's Uid line
+     * — real, effective, saved, filesystem.
+     *
+     * @return int|null Null where /proc says nothing, which includes not being Linux.
+     */
+    private function effectiveUid(): ?int
+    {
+        $status = $this->contentsOf('/proc/self/status');
+        if ($status === null || preg_match('/^Uid:\s+\d+\s+(\d+)/m', $status, $matches) !== 1) {
+            return null;
         }
 
-        return ['user' => (string) get_current_user(), 'uid' => null, 'home' => (string) getenv('HOME')];
+        return (int) $matches[1];
+    }
+
+    /**
+     * The name and home directory recorded for a uid in /etc/passwd.
+     *
+     * @param int $uid
+     * @return array{name?: string, home?: string}
+     */
+    private function passwdEntry(int $uid): array
+    {
+        $passwd = $this->contentsOf('/etc/passwd');
+        if ($passwd === null) {
+            return [];
+        }
+
+        // name:password:uid:gid:gecos:home:shell
+        foreach (preg_split('/\R/', $passwd) ?: [] as $line) {
+            $fields = explode(':', $line);
+            if (count($fields) >= 6 && $fields[2] !== '' && (int) $fields[2] === $uid) {
+                return ['name' => $fields[0], 'home' => rtrim($fields[5], '/')];
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * A file's contents, or null when it cannot be read.
+     *
+     * @param string $path
+     * @return string|null
+     */
+    private function contentsOf(string $path): ?string
+    {
+        try {
+            if (!$this->filesystemDriver->isExists($path) || !$this->filesystemDriver->isReadable($path)) {
+                return null;
+            }
+
+            return (string) $this->filesystemDriver->fileGetContents($path);
+        } catch (FileSystemException) {
+            return null;
+        }
+    }
+
+    /**
+     * The last segment of a path.
+     *
+     * @param string $path
+     * @return string
+     */
+    private function baseName(string $path): string
+    {
+        $path = rtrim($path, '/');
+        $position = strrpos($path, '/');
+
+        return $position === false ? $path : substr($path, $position + 1);
+    }
+
+    /**
+     * Whether a file exists and carries an execute bit.
+     *
+     * Any of the three bits counts. Which one applies depends on the user and
+     * the group the pool runs as, and the row this feeds is about the binary
+     * being runnable at all rather than about who owns it.
+     *
+     * @param string $path
+     * @return bool
+     */
+    private function isExecutableFile(string $path): bool
+    {
+        try {
+            if (!$this->filesystemDriver->isExists($path)) {
+                return false;
+            }
+
+            $stat = $this->filesystemDriver->stat($path);
+        } catch (FileSystemException) {
+            return false;
+        }
+
+        return is_array($stat) && (((int) ($stat['mode'] ?? 0)) & 0111) !== 0;
     }
 
     /**
