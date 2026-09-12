@@ -79,6 +79,32 @@ class Php implements CollectorInterface
     private const SPAWN_FUNCTIONS = ['exec', 'shell_exec', 'system', 'passthru', 'popen', 'proc_open'];
 
     /**
+     * Names in the Magento root the PHP user must not be able to read.
+     *
+     * Reading is the whole exposure here, with no write needed: auth.json
+     * carries the Marketplace and repo.magento.com keys, .git carries the
+     * source and its history — credentials in .git/config included — .github
+     * describes how the site is deployed, and deploy* is the deployment
+     * itself. Nothing in that list is touched while serving a page.
+     *
+     * Globs, because deploy* is a family: deploy/, deploy.sh, deploy-prod.
+     */
+    private const UNREADABLE_ROOT_PATTERNS = ['auth.json', '.git', '.github', 'deploy*'];
+
+    /**
+     * The same, in the PHP user's home directory where the setup gives it one:
+     * ssh keys, composer auth tokens, shell history.
+     */
+    private const UNREADABLE_HOME_PATTERNS = [
+        '.ssh',
+        '.composer',
+        '.config',
+        '.local',
+        '.cache',
+        '.bash*',
+    ];
+
+    /**
      * Extensions this stack depends on being present.
      *
      * Display name => the names PHP may have registered the extension under.
@@ -1005,8 +1031,9 @@ class Php implements CollectorInterface
     /**
      * What this install would hand an attacker who reached PHP.
      *
-     * Two questions, and neither of them is answered by anything else on this
-     * dashboard: what the PHP user can write, and whether it can reach cron.
+     * Three questions, and none of them is answered by anything else on this
+     * dashboard: what the PHP user can write, what it can read that it has no
+     * business opening, and whether it can reach cron.
      * A request that gets to run code is a contained incident while it can only
      * write var/, pub/media/ and tmp/; it is a persistent compromise the moment
      * it can write app/etc/, generated/, the document root or a crontab.
@@ -1018,7 +1045,10 @@ class Php implements CollectorInterface
     {
         $section = 'Hardening';
 
-        $this->buildFilesystemRows($result, $section, $this->probeFilesystem());
+        $probe = $this->probeFilesystem();
+
+        $this->buildFilesystemRows($result, $section, $probe);
+        $this->buildReadabilityRows($result, $section, $probe);
         $this->buildCronRows($result, $section, $this->probeCron());
     }
 
@@ -1055,8 +1085,9 @@ class Php implements CollectorInterface
 
         // The root itself is a candidate: a writable document root is how a
         // dropped file ends up being served.
+        $children = $this->childrenOf($root);
         $candidates = ['.' => $root];
-        foreach ($this->childrenOf($root) as $child) {
+        foreach ($children as $child) {
             $candidates[$this->relativeTo($root, $child)] = $child;
         }
         // Three paths that sit one level below the walk above and are the
@@ -1078,19 +1109,69 @@ class Php implements CollectorInterface
         foreach ($allowedPaths as $relative => $path) {
             unset($candidates[$relative]);
             if ($this->pathExists($path)) {
-                $allowed[$relative] = $this->isWritablePath($path);
+                $allowed[$this->label($relative, $path)] = $this->isWritablePath($path);
             }
         }
 
         $other = [];
         foreach ($candidates as $relative => $path) {
             if ($this->pathExists($path)) {
-                $other[$relative] = $this->isWritablePath($path);
+                $other[$this->label($relative, $path)] = $this->isWritablePath($path);
             }
         }
         ksort($other);
 
-        return $this->effectiveUser() + ['allowed' => $allowed, 'other' => $other];
+        $user = $this->effectiveUser();
+
+        return $user + [
+            'allowed' => $allowed,
+            'other' => $other,
+            'readable' => $this->probeReadability($root, $children, (string) ($user['home'] ?? '')),
+        ];
+    }
+
+    /**
+     * The paths that must not be readable, and whether they are.
+     *
+     * The root half reuses the walk above rather than repeating it. The home
+     * half is walked separately and only when home lies outside the Magento
+     * root, so a setup whose PHP user lives in the document root does not have
+     * everything reported twice. A home directory that cannot be listed at all
+     * yields nothing, which is the healthy reading: the entries this looks for
+     * are only findings when they can be opened.
+     *
+     * @param string $root
+     * @param string[] $children Absolute paths of the Magento root's entries.
+     * @param string $home
+     * @return array<string, bool> Label => readable.
+     */
+    private function probeReadability(string $root, array $children, string $home): array
+    {
+        $readable = [];
+
+        foreach ($children as $child) {
+            if ($this->matchesAny(basename($child), self::UNREADABLE_ROOT_PATTERNS)) {
+                $readable[$this->label($this->relativeTo($root, $child), $child)] = $this->isReadablePath($child);
+            }
+        }
+        ksort($readable);
+
+        $home = rtrim($home, '/');
+        if ($home === '' || $home === $root || str_starts_with($home . '/', $root . '/')) {
+            return $readable;
+        }
+
+        $inHome = [];
+        foreach ($this->childrenOf($home) as $entry) {
+            if ($this->matchesAny(basename($entry), self::UNREADABLE_HOME_PATTERNS)) {
+                // Labelled by the shell's own shorthand, so the row says where
+                // the entry is without repeating the home path on each one.
+                $inHome[$this->label('~/' . basename($entry), $entry)] = $this->isReadablePath($entry);
+            }
+        }
+        ksort($inHome);
+
+        return $readable + $inHome;
     }
 
     /**
@@ -1130,24 +1211,48 @@ class Php implements CollectorInterface
         $result->add(
             $section,
             'Writable Paths',
-            $writable === [] ? 'None' : implode(', ', $this->withTrailingSlash($writable)),
+            $writable === [] ? 'None' : implode(', ', $writable),
             $readOnly === [] && $writable !== [] ? Status::OK : Status::ERROR,
             $readOnly === []
                 ? 'tmp/, var/ and pub/media/ are everything the PHP user needs, and everything it should have.'
-                : 'Magento cannot run without writing ' . implode(', ', $this->withTrailingSlash($readOnly)) . '.'
+                : 'Magento cannot run without writing ' . implode(', ', $readOnly) . '.'
         );
 
         $offenders = array_keys(array_filter($other));
         $result->add(
             $section,
             'Unexpected Writable',
-            $offenders === [] ? 'None' : implode(', ', $this->withTrailingSlash($offenders)),
+            $offenders === [] ? 'None' : implode(', ', $offenders),
             $offenders === [] ? Status::OK : Status::ERROR,
             'tmp/, var/ and pub/media/ are the whole list, in production and in development alike. '
             . 'Anything else the PHP user can write turns one upload or one template injection into '
             . 'persistent code — generated/ and pub/static/ included, since those are build output that '
             . 'belongs to the deploy user, not to FPM. Checked one level deep, plus app/etc, env.php, '
             . 'generated/ and pub/static/ by name.'
+        );
+    }
+
+    /**
+     * @param Result $result
+     * @param string $section
+     * @param array $probe
+     * @return void
+     */
+    private function buildReadabilityRows(Result $result, string $section, array $probe): void
+    {
+        $readable = is_array($probe['readable'] ?? null) ? $probe['readable'] : [];
+        $offenders = array_keys(array_filter($readable));
+
+        $result->add(
+            $section,
+            'Unexpected Readable',
+            $offenders === [] ? 'None' : implode(', ', $offenders),
+            $offenders === [] ? Status::OK : Status::ERROR,
+            'Opening these is already the breach, no write required: auth.json is the Marketplace '
+            . 'and repo.magento.com keys, .git/ is the source and its history with whatever '
+            . '.git/config holds, .github/ describes the deployment and deploy* is the deployment, '
+            . 'and the PHP user\'s .ssh/, .composer/, .config/, .local/, .cache/ and .bash* hold ssh '
+            . 'keys, composer tokens and shell history. None of it is read while serving a page.'
         );
     }
 
@@ -1339,22 +1444,53 @@ class Php implements CollectorInterface
      * root. Without ext-posix the name still comes back and the uid row simply
      * reports what it has.
      *
-     * @return array{user: string, uid: int|null}
+     * The home directory comes from the passwd entry rather than from HOME,
+     * which FPM does not set by default and which a deploy script may have left
+     * pointing somewhere else entirely; HOME is the fallback for a build with
+     * no posix.
+     *
+     * @return array{user: string, uid: int|null, home: string}
      */
     private function effectiveUser(): array
     {
         if (function_exists('posix_geteuid')) {
             $uid = posix_geteuid();
             $name = '';
+            $home = '';
             if (function_exists('posix_getpwuid')) {
                 $entry = posix_getpwuid($uid);
-                $name = is_array($entry) ? (string) ($entry['name'] ?? '') : '';
+                if (is_array($entry)) {
+                    $name = (string) ($entry['name'] ?? '');
+                    $home = (string) ($entry['dir'] ?? '');
+                }
             }
 
-            return ['user' => $name, 'uid' => $uid];
+            return ['user' => $name, 'uid' => $uid, 'home' => $home !== '' ? $home : (string) getenv('HOME')];
         }
 
-        return ['user' => (string) get_current_user(), 'uid' => null];
+        return ['user' => (string) get_current_user(), 'uid' => null, 'home' => (string) getenv('HOME')];
+    }
+
+    /**
+     * Whether a name matches any of a set of shell globs.
+     *
+     * fnmatch() rather than a string comparison because two of the sets are
+     * families — deploy/, deploy.sh and deploy-prod are all the deployment, and
+     * .bashrc and .bash_history are both the shell's.
+     *
+     * @param string $name
+     * @param string[] $patterns
+     * @return bool
+     */
+    private function matchesAny(string $name, array $patterns): bool
+    {
+        foreach ($patterns as $pattern) {
+            if (fnmatch($pattern, $name)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -1415,6 +1551,19 @@ class Php implements CollectorInterface
     }
 
     /**
+     * @param string $path
+     * @return bool
+     */
+    private function isReadablePath(string $path): bool
+    {
+        try {
+            return $this->filesystemDriver->isReadable($path);
+        } catch (FileSystemException) {
+            return false;
+        }
+    }
+
+    /**
      * A path as it reads below the Magento root, or in full when it lives
      * outside it — a media directory mounted elsewhere is worth naming in full.
      *
@@ -1438,20 +1587,37 @@ class Php implements CollectorInterface
     }
 
     /**
-     * Directory names printed as directories. A file keeps its name, and the
-     * root keeps its dot.
+     * How a path is printed in a row: directories keep a trailing slash, files
+     * do not, and the Magento root keeps its dot.
      *
-     * @param string[] $paths
-     * @return string[]
+     * Decided by asking the filesystem rather than by looking at the name. Two
+     * of the three sets here are dotfiles, where the name says nothing — .git
+     * is a directory and .bash_history is not, and both would be guessed wrong.
+     *
+     * @param string $label
+     * @param string $path
+     * @return string
      */
-    private function withTrailingSlash(array $paths): array
+    private function label(string $label, string $path): string
     {
-        return array_map(
-            static function (string $path): string {
-                return str_contains(basename($path), '.') ? $path : $path . '/';
-            },
-            $paths
-        );
+        if ($label === '.') {
+            return $label;
+        }
+
+        return $this->isDirectoryPath($path) ? $label . '/' : $label;
+    }
+
+    /**
+     * @param string $path
+     * @return bool
+     */
+    private function isDirectoryPath(string $path): bool
+    {
+        try {
+            return $this->filesystemDriver->isDirectory($path);
+        } catch (FileSystemException) {
+            return false;
+        }
     }
 
     /**

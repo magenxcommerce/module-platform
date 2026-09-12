@@ -13,6 +13,7 @@ use Magenx\Platform\Model\Formatter;
 use Magenx\Platform\Model\Metric\Result;
 use Magenx\Platform\Model\Metric\Status;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -44,17 +45,19 @@ class HardeningRowsTest extends TestCase
         return $overrides + [
             'user' => 'www-data',
             'uid' => 33,
-            'allowed' => ['var' => true, 'pub/media' => true, 'tmp' => true],
+            'allowed' => ['var/' => true, 'pub/media/' => true, 'tmp/' => true],
             'other' => [
                 '.' => false,
-                'app' => false,
-                'app/etc' => false,
+                'app/' => false,
+                'app/etc/' => false,
                 'app/etc/env.php' => false,
-                'generated' => false,
-                'pub' => false,
-                'pub/static' => false,
-                'vendor' => false,
+                'generated/' => false,
+                'pub/' => false,
+                'pub/static/' => false,
+                'vendor/' => false,
             ],
+            'readable' => ['auth.json' => false, '.git/' => false, '~/.ssh/' => false],
+            'home' => '/var/www',
         ];
     }
 
@@ -125,22 +128,23 @@ class HardeningRowsTest extends TestCase
     public function testAnythingWritableOutsideTheAllowlistIsAnErrorAndIsNamed(): void
     {
         $facts = $this->filesystem();
-        $facts['other']['app/etc'] = true;
+        $facts['other']['app/etc/'] = true;
         $facts['other']['app/etc/env.php'] = true;
-        $facts['other']['vendor'] = true;
+        $facts['other']['vendor/'] = true;
 
         $row = $this->rowsFor('buildFilesystemRows', $facts)['Unexpected Writable'];
 
         $this->assertSame(Status::ERROR, $row['status']);
-        // The row says which paths to chmod, and prints directories as such.
+        // The row says which paths to chmod, directories printed as such by the
+        // probe that found them.
         $this->assertSame('app/etc/, app/etc/env.php, vendor/', $row['value']);
     }
 
     public function testBuildOutputGetsNoDeveloperModeExemption(): void
     {
         $facts = $this->filesystem();
-        $facts['other']['generated'] = true;
-        $facts['other']['pub/static'] = true;
+        $facts['other']['generated/'] = true;
+        $facts['other']['pub/static/'] = true;
 
         $row = $this->rowsFor('buildFilesystemRows', $facts)['Unexpected Writable'];
 
@@ -164,7 +168,7 @@ class HardeningRowsTest extends TestCase
     public function testAnAllowlistedPathThatIsNotWritableIsAnErrorToo(): void
     {
         $facts = $this->filesystem();
-        $facts['allowed']['var'] = false;
+        $facts['allowed']['var/'] = false;
 
         $row = $this->rowsFor('buildFilesystemRows', $facts)['Writable Paths'];
 
@@ -178,7 +182,7 @@ class HardeningRowsTest extends TestCase
     public function testAnInstallWithoutARootTmpIsNotPenalizedForIt(): void
     {
         $facts = $this->filesystem();
-        unset($facts['allowed']['tmp']);
+        unset($facts['allowed']['tmp/']);
 
         $row = $this->rowsFor('buildFilesystemRows', $facts)['Writable Paths'];
 
@@ -269,5 +273,125 @@ class HardeningRowsTest extends TestCase
 
         $this->assertSame('No access (no crontab binary is executable)', $row['value']);
         $this->assertSame(Status::OK, $row['status']);
+    }
+
+    public function testAnInstallWhereNothingSensitiveCanBeOpenedIsTheHealthyReading(): void
+    {
+        $rows = $this->rowsFor('buildReadabilityRows', $this->filesystem());
+
+        $this->assertSame(['Unexpected Readable'], array_keys($rows));
+        $this->assertSame('None', $rows['Unexpected Readable']['value']);
+        $this->assertSame(Status::OK, $rows['Unexpected Readable']['status']);
+    }
+
+    public function testCredentialsAndSourceThatCanBeOpenedAreAnErrorAndAreNamed(): void
+    {
+        $facts = $this->filesystem();
+        $facts['readable']['auth.json'] = true;
+        $facts['readable']['.git/'] = true;
+
+        $row = $this->rowsFor('buildReadabilityRows', $facts)['Unexpected Readable'];
+
+        // No write needed: auth.json is the Marketplace keys and .git/ is the
+        // source with its history.
+        $this->assertSame(Status::ERROR, $row['status']);
+        $this->assertSame('auth.json, .git/', $row['value']);
+    }
+
+    public function testTheHomeDotfilesAreReportedWithTheirShellShorthand(): void
+    {
+        $facts = $this->filesystem();
+        $facts['readable']['~/.ssh/'] = true;
+        $facts['readable']['~/.bash_history'] = true;
+
+        $row = $this->rowsFor('buildReadabilityRows', $facts)['Unexpected Readable'];
+
+        $this->assertSame(Status::ERROR, $row['status']);
+        $this->assertSame('~/.ssh/, ~/.bash_history', $row['value']);
+    }
+
+    public function testAProbeThatMatchedNothingStillRendersTheRow(): void
+    {
+        $facts = $this->filesystem();
+        unset($facts['readable']);
+
+        $row = $this->rowsFor('buildReadabilityRows', $facts)['Unexpected Readable'];
+
+        $this->assertSame('None', $row['value']);
+        $this->assertSame(Status::OK, $row['status']);
+    }
+
+    /**
+     * @param string $name
+     * @param bool $expected
+     */
+    #[DataProvider('rootNames')]
+    public function testTheRootPatternsCoverTheDeploymentFamily(string $name, bool $expected): void
+    {
+        $this->assertSame($expected, $this->matchesPattern($name, 'UNREADABLE_ROOT_PATTERNS'));
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: bool}>
+     */
+    public static function rootNames(): array
+    {
+        return [
+            'the composer credentials' => ['auth.json', true],
+            'the repository' => ['.git', true],
+            'the workflows' => ['.github', true],
+            'a deploy directory' => ['deploy', true],
+            'a deploy script' => ['deploy.sh', true],
+            'a per-environment deploy script' => ['deploy-prod.sh', true],
+            'a sample is not the credentials' => ['auth.json.sample', false],
+            'the media directory' => ['pub', false],
+            'the writable var' => ['var', false],
+        ];
+    }
+
+    /**
+     * @param string $name
+     * @param bool $expected
+     */
+    #[DataProvider('homeNames')]
+    public function testTheHomePatternsCoverTheShellFamily(string $name, bool $expected): void
+    {
+        $this->assertSame($expected, $this->matchesPattern($name, 'UNREADABLE_HOME_PATTERNS'));
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: bool}>
+     */
+    public static function homeNames(): array
+    {
+        return [
+            'ssh keys' => ['.ssh', true],
+            'composer auth' => ['.composer', true],
+            'the config tree' => ['.config', true],
+            'the data tree' => ['.local', true],
+            'the cache tree' => ['.cache', true],
+            'the shell rc' => ['.bashrc', true],
+            'the shell history' => ['.bash_history', true],
+            'the profile is not the shell\'s' => ['.profile', false],
+            'a public key pasted loose' => ['id_rsa.pub', false],
+        ];
+    }
+
+    /**
+     * One name against one of the collector's own pattern sets.
+     *
+     * @param string $name
+     * @param string $constant
+     * @return bool
+     */
+    private function matchesPattern(string $name, string $constant): bool
+    {
+        $reflection = new ReflectionClass(Php::class);
+        $collector = $reflection->newInstanceWithoutConstructor();
+
+        $method = $reflection->getMethod('matchesAny');
+        $method->setAccessible(true);
+
+        return (bool) $method->invokeArgs($collector, [$name, $reflection->getConstant($constant)]);
     }
 }
