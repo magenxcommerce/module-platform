@@ -47,6 +47,38 @@ class Php implements CollectorInterface
     private const DISK_USED_ERROR_PCT = 90.0;
 
     /**
+     * The root-level tmp/ this stack gives PHP for upload_tmp_dir and friends,
+     * which DirectoryList does not name — it knows var/tmp, a different
+     * directory. The other two allowlisted paths are read from DirectoryList in
+     * probeFilesystem(), which is also where every other DirectoryList code
+     * this class uses is named.
+     *
+     * A DirectoryList constant cannot be used in a constant expression here:
+     * the standalone test suite runs without magento/framework on the
+     * autoloader, and a class constant referencing one would be resolved when
+     * this class is loaded rather than when the probe runs.
+     */
+    private const WRITABLE_ALLOWLIST_ROOT_DIRS = ['tmp'];
+
+    /**
+     * Where a foothold would be dropped to survive the webshell being deleted.
+     */
+    private const CRON_PATHS = [
+        '/etc/crontab',
+        '/etc/cron.d',
+        '/etc/cron.hourly',
+        '/etc/cron.daily',
+        '/var/spool/cron',
+        '/var/spool/cron/crontabs',
+    ];
+
+    /** Where crontab(1) lives on the distributions this stack is built on. */
+    private const CRON_BINARIES = ['/usr/bin/crontab', '/bin/crontab', '/usr/local/bin/crontab'];
+
+    /** The functions that let a request start a process at all. */
+    private const SPAWN_FUNCTIONS = ['exec', 'shell_exec', 'system', 'passthru', 'popen', 'proc_open'];
+
+    /**
      * Extensions this stack depends on being present.
      *
      * Display name => the names PHP may have registered the extension under.
@@ -147,6 +179,7 @@ class Php implements CollectorInterface
         $this->addExtensionRow($result);
         $this->addOpcacheRows($result);
         $this->addFpmRows($result);
+        $this->addHardeningRows($result);
         $this->addHostRows($result);
 
         return $result;
@@ -967,6 +1000,458 @@ class Php implements CollectorInterface
                 'The memory usage peak since FPM started. Reported from PHP 8.1 onwards.'
             );
         }
+    }
+
+    /**
+     * What this install would hand an attacker who reached PHP.
+     *
+     * Two questions, and neither of them is answered by anything else on this
+     * dashboard: what the PHP user can write, and whether it can reach cron.
+     * A request that gets to run code is a contained incident while it can only
+     * write var/, pub/media/ and tmp/; it is a persistent compromise the moment
+     * it can write app/etc/, generated/, the document root or a crontab.
+     *
+     * @param Result $result
+     * @return void
+     */
+    private function addHardeningRows(Result $result): void
+    {
+        $section = 'Hardening';
+
+        $this->buildFilesystemRows($result, $section, $this->probeFilesystem());
+        $this->buildCronRows($result, $section, $this->probeCron());
+    }
+
+    /**
+     * Which paths the PHP user can write, split into the allowlist and
+     * everything else.
+     *
+     * The walk is the root's immediate children only — never recursive.
+     * vendor/ alone is tens of thousands of entries, and this runs inside an
+     * admin page request; the named paths below make up for the depth where it
+     * actually matters.
+     *
+     * @return array
+     */
+    private function probeFilesystem(): array
+    {
+        $root = rtrim($this->directoryList->getRoot(), '/');
+
+        // Magento writes uploads and their cached resizes to pub/media, and
+        // everything else it produces at runtime — caches, logs, sessions,
+        // reports, var/tmp — below var. Both come from DirectoryList so a
+        // relocated var/ or a media directory mounted outside the document root
+        // is still recognised as itself.
+        $allowedPaths = [];
+        foreach ([DirectoryList::VAR_DIR, DirectoryList::MEDIA] as $code) {
+            $path = $this->pathFor($code);
+            if ($path !== '') {
+                $allowedPaths[$this->relativeTo($root, $path)] = $path;
+            }
+        }
+        foreach (self::WRITABLE_ALLOWLIST_ROOT_DIRS as $relative) {
+            $allowedPaths[$relative] = $root . '/' . $relative;
+        }
+
+        // The root itself is a candidate: a writable document root is how a
+        // dropped file ends up being served.
+        $candidates = ['.' => $root];
+        foreach ($this->childrenOf($root) as $child) {
+            $candidates[$this->relativeTo($root, $child)] = $child;
+        }
+        // Three paths that sit one level below the walk above and are the
+        // highest-value targets on the box: app/etc holds env.php and the
+        // encryption key, and generated/ and pub/static/ are executed and
+        // served respectively.
+        foreach ([DirectoryList::CONFIG, DirectoryList::GENERATED, DirectoryList::STATIC_VIEW] as $code) {
+            $path = $this->pathFor($code);
+            if ($path !== '') {
+                $candidates[$this->relativeTo($root, $path)] = $path;
+            }
+        }
+        $config = $this->pathFor(DirectoryList::CONFIG);
+        if ($config !== '') {
+            $candidates[$this->relativeTo($root, $config . '/env.php')] = $config . '/env.php';
+        }
+
+        $allowed = [];
+        foreach ($allowedPaths as $relative => $path) {
+            unset($candidates[$relative]);
+            if ($this->pathExists($path)) {
+                $allowed[$relative] = $this->isWritablePath($path);
+            }
+        }
+
+        $other = [];
+        foreach ($candidates as $relative => $path) {
+            if ($this->pathExists($path)) {
+                $other[$relative] = $this->isWritablePath($path);
+            }
+        }
+        ksort($other);
+
+        return $this->effectiveUser() + ['allowed' => $allowed, 'other' => $other];
+    }
+
+    /**
+     * @param Result $result
+     * @param string $section
+     * @param array $probe
+     * @return void
+     */
+    private function buildFilesystemRows(Result $result, string $section, array $probe): void
+    {
+        $uid = $probe['uid'] ?? null;
+        $user = (string) ($probe['user'] ?? '');
+        $allowed = is_array($probe['allowed'] ?? null) ? $probe['allowed'] : [];
+        $other = is_array($probe['other'] ?? null) ? $probe['other'] : [];
+
+        if ($user !== '' || $uid !== null) {
+            $isRoot = $uid === 0;
+            $result->add(
+                $section,
+                'Runs As',
+                $uid === null ? $user : sprintf('%s (uid %d)', $user === '' ? 'unknown' : $user, $uid),
+                $isRoot ? Status::ERROR : Status::INFO,
+                $isRoot
+                    ? 'This pool runs as root, so every path on the host tests writable and the two rows '
+                    . 'below stop measuring anything. Run FPM as an unprivileged user that owns nothing '
+                    . 'but the three paths it writes.'
+                    : 'The user the two rows below are measured for. Whatever this user can write, a '
+                    . 'request that reaches PHP can write.'
+            );
+        }
+
+        $writable = array_keys(array_filter($allowed));
+        $readOnly = array_keys(array_filter($allowed, static function (bool $isWritable): bool {
+            return !$isWritable;
+        }));
+
+        $result->add(
+            $section,
+            'Writable Paths',
+            $writable === [] ? 'None' : implode(', ', $this->withTrailingSlash($writable)),
+            $readOnly === [] && $writable !== [] ? Status::OK : Status::ERROR,
+            $readOnly === []
+                ? 'tmp/, var/ and pub/media/ are everything the PHP user needs, and everything it should have.'
+                : 'Magento cannot run without writing ' . implode(', ', $this->withTrailingSlash($readOnly)) . '.'
+        );
+
+        $offenders = array_keys(array_filter($other));
+        $result->add(
+            $section,
+            'Unexpected Writable',
+            $offenders === [] ? 'None' : implode(', ', $this->withTrailingSlash($offenders)),
+            $offenders === [] ? Status::OK : Status::ERROR,
+            'tmp/, var/ and pub/media/ are the whole list, in production and in development alike. '
+            . 'Anything else the PHP user can write turns one upload or one template injection into '
+            . 'persistent code — generated/ and pub/static/ included, since those are build output that '
+            . 'belongs to the deploy user, not to FPM. Checked one level deep, plus app/etc, env.php, '
+            . 'generated/ and pub/static/ by name.'
+        );
+    }
+
+    /**
+     * Whether cron is reachable from this PHP user, as facts rather than as a
+     * verdict — the verdict is built from them below.
+     *
+     * @return array
+     */
+    private function probeCron(): array
+    {
+        $user = (string) ($this->effectiveUser()['user'] ?? '');
+
+        $spawnable = [];
+        foreach (self::SPAWN_FUNCTIONS as $function) {
+            if (function_exists($function)) {
+                $spawnable[] = $function;
+            }
+        }
+
+        $crontab = '';
+        foreach (self::CRON_BINARIES as $candidate) {
+            // No driver equivalent for the executable bit, and the value is the
+            // whole point of the row: a crontab that cannot be executed is not
+            // a way in.
+            if ($this->pathExists($candidate) && is_executable($candidate)) {
+                $crontab = $candidate;
+                break;
+            }
+        }
+
+        $paths = self::CRON_PATHS;
+        if ($user !== '') {
+            // The user's own spool entry, which is writable long before the
+            // spool directory is.
+            $paths[] = '/var/spool/cron/crontabs/' . $user;
+            $paths[] = '/var/spool/cron/' . $user;
+        }
+
+        $writable = [];
+        foreach ($paths as $path) {
+            if ($this->pathExists($path) && $this->isWritablePath($path)) {
+                $writable[] = $path;
+            }
+        }
+
+        return [
+            'user' => $user,
+            'spawnable' => $spawnable,
+            'crontab' => $crontab,
+            'denied' => $this->cronDenies($user),
+            'writable' => $writable,
+        ];
+    }
+
+    /**
+     * @param Result $result
+     * @param string $section
+     * @param array $facts
+     * @return void
+     */
+    private function buildCronRows(Result $result, string $section, array $facts): void
+    {
+        $spawnable = is_array($facts['spawnable'] ?? null) ? $facts['spawnable'] : [];
+        $writable = is_array($facts['writable'] ?? null) ? $facts['writable'] : [];
+        $crontab = (string) ($facts['crontab'] ?? '');
+        $denied = $facts['denied'] ?? null;
+
+        $result->add(
+            $section,
+            'Process Execution',
+            $spawnable === [] ? 'Disabled' : 'Available: ' . implode(', ', $spawnable),
+            $spawnable === [] ? Status::OK : Status::WARN,
+            'disable_functions is what stops a request shelling out at all. With any of these enabled, '
+            . 'every command this user may run is reachable from the web.'
+        );
+
+        // A file dropped into a cron directory needs no process of its own, so a
+        // writable one is the finding whatever disable_functions says.
+        if ($writable !== []) {
+            $result->add(
+                $section,
+                'Cron Access',
+                'Writable: ' . implode(', ', $writable),
+                Status::ERROR,
+                'A file written here runs as whatever user the crontab names, on the schedule it names, '
+                . 'and it outlives the webshell being found and deleted. The PHP user must not own or '
+                . 'be able to write any of it.'
+            );
+
+            return;
+        }
+
+        if ($crontab !== '' && $spawnable !== [] && $denied !== true) {
+            $result->add(
+                $section,
+                'Cron Access',
+                sprintf('crontab reachable (%s)', $crontab),
+                Status::ERROR,
+                'This user can execute crontab(1) and PHP can start a process, so a request can install '
+                . 'a scheduled job. Deny it in /etc/cron.allow, or drop crontab(1) from the image — '
+                . 'Magento\'s own cron belongs to a separate system user or container, never to the '
+                . 'FPM pool.'
+            );
+
+            return;
+        }
+
+        if ($spawnable === []) {
+            $reason = 'no process-spawning function is enabled';
+        } elseif ($denied === true) {
+            $reason = 'denied by cron.allow / cron.deny';
+        } else {
+            $reason = 'no crontab binary is executable';
+        }
+
+        $result->add(
+            $section,
+            'Cron Access',
+            sprintf('No access (%s)', $reason),
+            Status::OK,
+            'Nothing this request can reach installs a scheduled job. Magento\'s own cron should run '
+            . 'from a separate system user or container.'
+        );
+    }
+
+    /**
+     * Whether cron.allow / cron.deny keeps this user out.
+     *
+     * cron.allow wins where it exists and is exhaustive — a user not listed is
+     * denied. cron.deny is only consulted in its absence, and an empty one (the
+     * Debian default) denies nobody.
+     *
+     * @param string $user
+     * @return bool|null Null when neither file could be read, so nothing is known.
+     */
+    private function cronDenies(string $user): ?bool
+    {
+        if ($user === '') {
+            return null;
+        }
+
+        $allow = $this->readUserList('/etc/cron.allow');
+        if ($allow !== null) {
+            return !in_array($user, $allow, true);
+        }
+
+        $deny = $this->readUserList('/etc/cron.deny');
+        if ($deny !== null) {
+            return in_array($user, $deny, true);
+        }
+
+        return null;
+    }
+
+    /**
+     * One user name per line, comments and blanks dropped.
+     *
+     * @param string $path
+     * @return string[]|null Null when the file is absent or unreadable.
+     */
+    private function readUserList(string $path): ?array
+    {
+        try {
+            if (!$this->filesystemDriver->isExists($path) || !$this->filesystemDriver->isReadable($path)) {
+                return null;
+            }
+
+            $contents = (string) $this->filesystemDriver->fileGetContents($path);
+        } catch (FileSystemException) {
+            return null;
+        }
+
+        $users = [];
+        foreach (preg_split('/\R/', $contents) ?: [] as $line) {
+            $line = trim($line);
+            if ($line !== '' && !str_starts_with($line, '#')) {
+                $users[] = $line;
+            }
+        }
+
+        return $users;
+    }
+
+    /**
+     * The user this process actually runs as.
+     *
+     * posix is the only source that gives the uid, and the uid is what says
+     * root. Without ext-posix the name still comes back and the uid row simply
+     * reports what it has.
+     *
+     * @return array{user: string, uid: int|null}
+     */
+    private function effectiveUser(): array
+    {
+        if (function_exists('posix_geteuid')) {
+            $uid = posix_geteuid();
+            $name = '';
+            if (function_exists('posix_getpwuid')) {
+                $entry = posix_getpwuid($uid);
+                $name = is_array($entry) ? (string) ($entry['name'] ?? '') : '';
+            }
+
+            return ['user' => $name, 'uid' => $uid];
+        }
+
+        return ['user' => (string) get_current_user(), 'uid' => null];
+    }
+
+    /**
+     * A DirectoryList path, or an empty string for a code this Magento does not
+     * know.
+     *
+     * @param string $code
+     * @return string
+     */
+    private function pathFor(string $code): string
+    {
+        try {
+            return rtrim($this->directoryList->getPath($code), '/');
+        } catch (FileSystemException | \InvalidArgumentException) {
+            return '';
+        }
+    }
+
+    /**
+     * The immediate children of a directory, or nothing when it cannot be read.
+     *
+     * @param string $path
+     * @return string[]
+     */
+    private function childrenOf(string $path): array
+    {
+        try {
+            return $this->filesystemDriver->readDirectory($path);
+        } catch (FileSystemException) {
+            return [];
+        }
+    }
+
+    /**
+     * @param string $path
+     * @return bool
+     */
+    private function pathExists(string $path): bool
+    {
+        try {
+            return $this->filesystemDriver->isExists($path);
+        } catch (FileSystemException) {
+            return false;
+        }
+    }
+
+    /**
+     * @param string $path
+     * @return bool
+     */
+    private function isWritablePath(string $path): bool
+    {
+        try {
+            return $this->filesystemDriver->isWritable($path);
+        } catch (FileSystemException) {
+            return false;
+        }
+    }
+
+    /**
+     * A path as it reads below the Magento root, or in full when it lives
+     * outside it — a media directory mounted elsewhere is worth naming in full.
+     *
+     * @param string $root
+     * @param string $path
+     * @return string
+     */
+    private function relativeTo(string $root, string $path): string
+    {
+        $path = rtrim($path, '/');
+
+        if ($root !== '' && $path === $root) {
+            return '.';
+        }
+
+        if ($root !== '' && str_starts_with($path, $root . '/')) {
+            return substr($path, strlen($root) + 1);
+        }
+
+        return $path;
+    }
+
+    /**
+     * Directory names printed as directories. A file keeps its name, and the
+     * root keeps its dot.
+     *
+     * @param string[] $paths
+     * @return string[]
+     */
+    private function withTrailingSlash(array $paths): array
+    {
+        return array_map(
+            static function (string $path): string {
+                return str_contains(basename($path), '.') ? $path : $path . '/';
+            },
+            $paths
+        );
     }
 
     /**
