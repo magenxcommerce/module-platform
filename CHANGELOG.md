@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/magenxcommerce/module-platform/compare/v1.3.0...v1.3.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* Add hardening assessment to PHP collector for security posture ([#23](https://github.com/magenxcommerce/module-platform/issues/23)) ([b14c3ac](https://github.com/magenxcommerce/module-platform/commit/b14c3ac5c1bd43be4f5481d518db734c20620b6a))
+
 ## [1.3.0](https://github.com/magenxcommerce/module-platform/compare/v1.2.0...v1.3.0) (2026-09-04)
 
 
