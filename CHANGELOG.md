@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.2](https://github.com/magenxcommerce/module-platform/compare/v1.3.1...v1.3.2) (2026-09-12)
+
+
+### Bug Fixes
+
+* Fix performance and correctness issues in metrics collection ([#25](https://github.com/magenxcommerce/module-platform/issues/25)) ([2920a71](https://github.com/magenxcommerce/module-platform/commit/2920a71ae9a9717c54532b69adf2f404f4c7f138))
+* Repair keyboard navigation and userinfo redaction ([2920a71](https://github.com/magenxcommerce/module-platform/commit/2920a71ae9a9717c54532b69adf2f404f4c7f138))
+* **style:** Assign the memoized user outside the return ([#27](https://github.com/magenxcommerce/module-platform/issues/27)) ([51cc3ec](https://github.com/magenxcommerce/module-platform/commit/51cc3ec044c2482e98925fa035661f111929f84b))
+
 ## [1.3.1](https://github.com/magenxcommerce/module-platform/compare/v1.3.0...v1.3.1) (2026-09-12)
 
 
