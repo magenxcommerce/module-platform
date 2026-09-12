@@ -1438,9 +1438,12 @@ class Php implements CollectorInterface
      * the filesystem driver like everything else here, so a container without
      * /proc simply yields no uid and the row that needs one is left out.
      *
-     * The home directory comes from the passwd entry rather than from the
-     * environment, which FPM does not populate by default; HOME is the fallback
-     * for a host that has no passwd entry for this uid at all.
+     * The home directory comes from the passwd entry and from nowhere else.
+     * HOME is not consulted: FPM does not populate it, where it is set it is
+     * whatever the last deploy script exported, and the Magento coding standard
+     * forbids reading the superglobal that carries it. A uid with no passwd
+     * entry therefore has no home here, and the readability probe walks the
+     * Magento root alone.
      *
      * @return array{user: string, uid: int|null, home: string}
      */
@@ -1448,12 +1451,11 @@ class Php implements CollectorInterface
     {
         $uid = $this->effectiveUid();
         $entry = $uid === null ? [] : $this->passwdEntry($uid);
-        $home = (string) ($entry['home'] ?? '');
 
         return [
             'user' => (string) ($entry['name'] ?? ''),
             'uid' => $uid,
-            'home' => $home !== '' ? $home : (string) ($_SERVER['HOME'] ?? ''),
+            'home' => (string) ($entry['home'] ?? ''),
         ];
     }
 
