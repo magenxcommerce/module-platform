@@ -3,7 +3,7 @@
 A platform status dashboard inside the Magento admin.
 
 The MagenX stack runs Magento headless behind a private Docker network: MariaDB, Redis,
-RabbitMQ, OpenSearch, Nginx and PHP-FPM all sit where nobody can see them. Grafana covers
+RabbitMQ, OpenSearch, Nginx and PHP-FPM or FrankenPHP all sit where nobody can see them. Grafana covers
 the storefront's request metrics, but there is nothing in the admin that answers *"is the
 stack healthy right now?"* — the question a shop admin actually asks when orders stop
 confirming or search goes empty.
@@ -38,6 +38,7 @@ log line.
 | **PHP / FPM** | `opcache_get_status()` and friends in-process, plus the php-fpm status page | Every block OPcache publishes — memory and free memory, wasted memory against the percentage it restarts at, the `cache_full` flag, the interned string buffer, cached scripts and cached keys, hit rate with the counters behind it, blacklist misses, the three restart causes counted separately, a restart in flight, when the cache started and last emptied, JIT and its buffer, and preloading — missing required extensions and missing recommended ones (`redis`, `igbinary`), every field the FPM status page publishes — pool, process manager, start time and uptime, accepted connections with their average rate, the listen queue live and at its high-water mark against the socket backlog, idle/active/total and peak-active processes, `max children reached`, slow requests and memory peak — plus the hardening reads: the user FPM runs as, every path it can write measured against the `tmp/` + `var/` + `pub/media/` allowlist, which of `auth.json`, `.git`, `.github`, `deploy*` and the PHP user's home dotfiles it can read, whether process-spawning functions are disabled, and whether cron is reachable — plus host load and disk |
 | **Nginx** | `stub_status` | Active connections, dropped connections, requests per connection, worker read/write/wait state. The endpoint URL rides in the tab's summary line rather than a card of its own |
 | **imgproxy** | Prometheus `/metrics` | Error rate and errors split by type, 5xx share of requests, worker utilization, the queue/downloading/processing spans — which separate a saturated imgproxy from a slow origin from an expensive image — and libvips memory against its peak |
+| **FrankenPHP** | Caddy `metrics` handler | Regular-thread utilization with worker threads taken out, the request queue waiting for a free PHP thread, per-worker ready/busy/queue/crashes, OPcache restarts by reason (PHP 8.4+), and — with Caddy's `metrics` global option — requests in flight, average request time and 5xx share |
 
 The two statement-digest sections answer the questions a slow database actually raises —
 what runs most often, and what burns the most total time, which are usually different
@@ -73,17 +74,18 @@ is one deployment.
 | `magenx_platform/general/timeout` | `3` | Connect and read timeout per probe, in seconds |
 | `magenx_platform/general/cache_ttl` | `10` | How long a snapshot is reused, so a held-down refresh cannot become a load generator |
 | `magenx_platform/general/auto_refresh` | `0` | Browser-side refresh interval; `0` is manual only |
-| `magenx_platform/collectors/enabled_collectors` | all six | Which tabs to show. Deselect a backend this deployment does not run |
+| `magenx_platform/collectors/enabled_collectors` | all but imgproxy | Which tabs to show. Deselect a backend this deployment does not run |
 | `magenx_platform/endpoints/nginx_status_url` | `http://nginx/nginx_status` | An nginx location running `stub_status` |
 | `magenx_platform/endpoints/fpm_status_url` | `http://nginx/fpm_status` | The php-fpm `pm.status_path` endpoint |
 | `magenx_platform/endpoints/rabbitmq_management_url` | *(empty)* | Empty derives `http://<amqp host>:15672` from `env.php` |
 | `magenx_platform/endpoints/imgproxy_metrics_url` | `http://imgproxy:4594/metrics` | The imgproxy Prometheus endpoint. Needs `IMGPROXY_PROMETHEUS_BIND` set, on its own port |
+| `magenx_platform/endpoints/frankenphp_metrics_url` | `http://frankenphp:2020/metrics` | A Caddy site block running only the `metrics` handler. Not the admin API |
 
-Only these backends need an address. Nginx, PHP-FPM and imgproxy publish their stats over
-HTTP rather than through a client library, and RabbitMQ reports nothing over AMQP itself.
-imgproxy is the one that cannot be derived at all: unlike the database, Redis, amqp and
-search hosts, it appears nowhere in `app/etc/env.php` or `core_config_data`, because Magento
-does not know it exists.
+Only these backends need an address. Nginx, PHP-FPM, imgproxy and FrankenPHP publish their
+stats over HTTP rather than through a client library, and RabbitMQ reports nothing over AMQP
+itself. imgproxy and FrankenPHP cannot be derived at all: unlike the database, Redis, amqp
+and search hosts, they appear nowhere in `app/etc/env.php` or `core_config_data`, because
+Magento does not know they exist.
 
 Snapshots live in their own cache type, so `cache_ttl` is not the only handle on them:
 
@@ -128,6 +130,45 @@ A metric this module cannot find skips its row rather than being guessed at, whi
 carries the tab across imgproxy versions. If a row is missing, `curl` the endpoint and
 compare. Metrics are served from **any path** on the Prometheus binding, so `/metrics` is a
 convention rather than a requirement.
+
+### Why FrankenPHP is read from a metrics site block and not the admin API
+
+FrankenPHP registers its `frankenphp_*` metrics in Caddy's own Prometheus registry, beside
+Caddy's `caddy_http_*` request metrics. Caddy serves that registry in two places: at
+`/metrics` on the admin API (`localhost:2019` by default), and from the `metrics` handler in
+any site block. The [FrankenPHP docs](https://frankenphp.dev/docs/metrics/) only say the
+metrics appear "when Caddy metrics are enabled" — nothing in them needs the admin API.
+
+The admin API is the wrong one to open to the network. It has no read-only mode: whoever can
+reach it can `POST /load` and replace the running configuration, and moving it off loopback
+also means setting `origins` to get past its Host check. A site block that does nothing but
+`metrics` publishes the same numbers and accepts nothing:
+
+```caddyfile
+{
+    metrics     # adds caddy_http_* request metrics; the tab's HTTP section needs it
+    frankenphp
+}
+
+:2020 {
+    metrics /metrics
+}
+```
+
+Leave the admin API on its default loopback address (or `admin off`), keep port `2020` on
+the private Docker network rather than publishing it to the host — it is unauthenticated —
+and point `frankenphp_metrics_url` at `http://frankenphp:2020/metrics`.
+
+The thread gauges need reading with one detail in mind: FrankenPHP counts a running worker
+script as a busy thread for as long as it runs, so `frankenphp_busy_threads` on a server
+with workers never drops below the worker count. The tab rates **regular** threads — total
+minus workers — and leaves the raw figure unrated beside it. Magento itself does not run in
+worker mode, so on this stack the two usually agree.
+
+`frankenphp_queue_depth` and `frankenphp_worker_queue_depth` are read by full name rather
+than through the suffix match imgproxy needs: a suffix match on `queue_depth` would fold
+every worker's queue into the regular-thread one. Requests served by the `metrics` handler
+itself are left out of the HTTP section, so the tab's own probe is not counted as traffic.
 
 If the RabbitMQ tab reports that the management API did not answer, enable it on the broker:
 

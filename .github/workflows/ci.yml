@@ -21,4 +21,7 @@ jobs:
     # required status checks in a way that a trigger-level filter would not.
     if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     uses: magenxcommerce/workflows/.github/workflows/php-module-ci.yml@main
+    # magento/* packages live on repo.magento.com. Without MAGENTO_PUBLIC_KEY
+    # and MAGENTO_PRIVATE_KEY composer install fails and the framework suite
+    # has no Magento classes to mock.
     secrets: inherit

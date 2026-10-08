@@ -22,6 +22,11 @@
             "Magenx\\Platform\\": ""
         }
     },
+    "config": {
+        "allow-plugins": {
+            "magento/composer-dependency-version-audit-plugin": false
+        }
+    },
     "scripts": {
         "test": "phpunit"
     }
