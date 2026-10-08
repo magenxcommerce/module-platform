@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.3](https://github.com/magenxcommerce/module-platform/compare/v1.3.2...v1.3.3) (2026-10-08)
+
+
+### Bug Fixes
+
+* Add FrankenPHP collector for platform overview dashboard ([#28](https://github.com/magenxcommerce/module-platform/issues/28)) ([a28a035](https://github.com/magenxcommerce/module-platform/commit/a28a035bde3e000f29ca139cb1ba58dd1b26e48f))
+
 ## [1.3.2](https://github.com/magenxcommerce/module-platform/compare/v1.3.1...v1.3.2) (2026-09-12)
 
 
