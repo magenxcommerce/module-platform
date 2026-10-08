@@ -35,3 +35,15 @@ spl_autoload_register(
         }
     }
 );
+
+// Factories Magento would have generated into generated/code. Registered last,
+// so a real generated class always wins over the stand-in.
+spl_autoload_register(
+    static function (string $class): void {
+        $path = __DIR__ . '/Generated/' . str_replace('\\', '/', $class) . '.php';
+
+        if (str_starts_with($class, 'Magento\\') && is_file($path)) {
+            require_once $path;
+        }
+    }
+);
