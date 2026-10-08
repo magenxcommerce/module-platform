@@ -27,6 +27,7 @@ class Config
     public const XML_PATH_FPM_STATUS_URL = 'magenx_platform/endpoints/fpm_status_url';
     public const XML_PATH_RABBITMQ_MANAGEMENT_URL = 'magenx_platform/endpoints/rabbitmq_management_url';
     public const XML_PATH_IMGPROXY_METRICS_URL = 'magenx_platform/endpoints/imgproxy_metrics_url';
+    public const XML_PATH_FRANKENPHP_METRICS_URL = 'magenx_platform/endpoints/frankenphp_metrics_url';
 
     /**
      * A probe that outlives this is reported as unavailable rather than allowed
@@ -129,5 +130,16 @@ class Config
     public function getImgProxyMetricsUrl(): string
     {
         return trim((string) $this->scopeConfig->getValue(self::XML_PATH_IMGPROXY_METRICS_URL));
+    }
+
+    /**
+     * A Caddy site block running the metrics handler, not the admin API: the
+     * admin API publishes the same registry but also accepts configuration.
+     *
+     * @return string
+     */
+    public function getFrankenPhpMetricsUrl(): string
+    {
+        return trim((string) $this->scopeConfig->getValue(self::XML_PATH_FRANKENPHP_METRICS_URL));
     }
 }

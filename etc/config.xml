@@ -24,7 +24,7 @@
                     part of every deployment, and the multiselect is generated from the
                     collector pool, so the tab is offered without being switched on.
                 -->
-                <enabled_collectors>mariadb,redis,rabbitmq,opensearch,php,nginx</enabled_collectors>
+                <enabled_collectors>mariadb,redis,rabbitmq,opensearch,php,nginx,frankenphp</enabled_collectors>
             </collectors>
             <endpoints>
                 <nginx_status_url>http://nginx/nginx_status</nginx_status_url>
@@ -36,6 +36,12 @@
                     share the first, so this is deliberately the next port up.
                 -->
                 <imgproxy_metrics_url>http://imgproxy:4594/metrics</imgproxy_metrics_url>
+                <!--
+                    A Caddy site block that runs only the metrics handler, not the admin
+                    API on 2019: the admin API serves the same registry but also accepts
+                    POST /load, and has no read-only mode.
+                -->
+                <frankenphp_metrics_url>http://frankenphp:2020/metrics</frankenphp_metrics_url>
             </endpoints>
         </magenx_platform>
     </default>

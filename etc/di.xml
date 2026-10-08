@@ -21,6 +21,7 @@
                 <item name="php" xsi:type="object">Magenx\Platform\Model\Collector\Php</item>
                 <item name="nginx" xsi:type="object">Magenx\Platform\Model\Collector\Nginx</item>
                 <item name="imgproxy" xsi:type="object">Magenx\Platform\Model\Collector\ImgProxy</item>
+                <item name="frankenphp" xsi:type="object">Magenx\Platform\Model\Collector\FrankenPhp</item>
             </argument>
         </arguments>
     </type>
