@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.4](https://github.com/magenxcommerce/module-platform/compare/v1.3.3...v1.3.4) (2026-10-10)
+
+
+### Bug Fixes
+
+* use canRestore in system.xml so Magento accepts the config ([#31](https://github.com/magenxcommerce/module-platform/issues/31)) ([75085b5](https://github.com/magenxcommerce/module-platform/commit/75085b5d34a45f3580237ed004b0ccaa58d65958))
+
 ## [1.3.3](https://github.com/magenxcommerce/module-platform/compare/v1.3.2...v1.3.3) (2026-10-08)
 
 
