@@ -26,24 +26,24 @@
             <resource>Magenx_Platform::config</resource>
             <group id="general" translate="label" type="text" sortOrder="10" showInDefault="1">
                 <label>General</label>
-                <field id="enabled" translate="label comment" type="select" sortOrder="10" showInDefault="1" canRestoreToDefault="1">
+                <field id="enabled" translate="label comment" type="select" sortOrder="10" showInDefault="1" canRestore="1">
                     <label>Enabled</label>
                     <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
                     <comment>Master switch. When set to No the Platform Overview page renders a notice and no backend is contacted.</comment>
                 </field>
-                <field id="timeout" translate="label comment" type="text" sortOrder="20" showInDefault="1" canRestoreToDefault="1">
+                <field id="timeout" translate="label comment" type="text" sortOrder="20" showInDefault="1" canRestore="1">
                     <label>Backend Timeout (seconds)</label>
                     <validate>validate-digits validate-greater-than-zero</validate>
                     <comment>Connect and read timeout applied to every backend probe. A backend that exceeds it is reported as unavailable instead of hanging the tab. Keep it low — 3 seconds is usually plenty on a private Docker network.</comment>
                     <depends><field id="enabled">1</field></depends>
                 </field>
-                <field id="cache_ttl" translate="label comment" type="text" sortOrder="30" showInDefault="1" canRestoreToDefault="1">
+                <field id="cache_ttl" translate="label comment" type="text" sortOrder="30" showInDefault="1" canRestore="1">
                     <label>Result Cache (seconds)</label>
                     <validate>validate-digits</validate>
                     <comment>How long a collected snapshot is reused before the backend is probed again. Stops a held-down refresh from hammering the stack. Set to 0 to always probe live.</comment>
                     <depends><field id="enabled">1</field></depends>
                 </field>
-                <field id="auto_refresh" translate="label comment" type="text" sortOrder="40" showInDefault="1" canRestoreToDefault="1">
+                <field id="auto_refresh" translate="label comment" type="text" sortOrder="40" showInDefault="1" canRestore="1">
                     <label>Auto Refresh (seconds)</label>
                     <validate>validate-digits</validate>
                     <comment>Interval at which the open tab reloads itself in the browser. Set to 0 for manual refresh only. Values below the result cache above just re-read the cache.</comment>
@@ -52,7 +52,7 @@
             </group>
             <group id="collectors" translate="label" type="text" sortOrder="20" showInDefault="1">
                 <label>Tabs</label>
-                <field id="enabled_collectors" translate="label comment" type="multiselect" sortOrder="10" showInDefault="1" canRestoreToDefault="1">
+                <field id="enabled_collectors" translate="label comment" type="multiselect" sortOrder="10" showInDefault="1" canRestore="1">
                     <label>Show Tabs</label>
                     <source_model>Magenx\Platform\Model\Config\Source\Collectors</source_model>
                     <comment>Which backends get a tab. Deselect anything this deployment does not run, so its tab does not sit permanently red.</comment>
@@ -62,27 +62,27 @@
             <group id="endpoints" translate="label comment" type="text" sortOrder="30" showInDefault="1">
                 <label>Status Endpoints</label>
                 <comment>Only these backends need an address configured. Nginx, PHP-FPM, imgproxy and FrankenPHP publish their stats over HTTP rather than through a client library, RabbitMQ reports nothing over AMQP itself — its numbers come from the management API — and imgproxy and FrankenPHP are absent from Magento's own configuration entirely, so there is nothing to derive them from.</comment>
-                <field id="nginx_status_url" translate="label comment" type="text" sortOrder="10" showInDefault="1" canRestoreToDefault="1">
+                <field id="nginx_status_url" translate="label comment" type="text" sortOrder="10" showInDefault="1" canRestore="1">
                     <label>Nginx Status URL</label>
                     <comment>URL of an nginx stub_status endpoint, reachable from the PHP container. Leave empty to disable the Nginx tab's probe.</comment>
                     <depends><field id="enabled">1</field></depends>
                 </field>
-                <field id="fpm_status_url" translate="label comment" type="text" sortOrder="20" showInDefault="1" canRestoreToDefault="1">
+                <field id="fpm_status_url" translate="label comment" type="text" sortOrder="20" showInDefault="1" canRestore="1">
                     <label>PHP-FPM Status URL</label>
                     <comment>URL of the php-fpm pm.status_path endpoint, reachable from the PHP container. The module appends its own query string to request JSON. Leave empty to show in-process PHP metrics only.</comment>
                     <depends><field id="enabled">1</field></depends>
                 </field>
-                <field id="rabbitmq_management_url" translate="label comment" type="text" sortOrder="30" showInDefault="1" canRestoreToDefault="1">
+                <field id="rabbitmq_management_url" translate="label comment" type="text" sortOrder="30" showInDefault="1" canRestore="1">
                     <label>RabbitMQ Management URL</label>
                     <comment>Base URL of the RabbitMQ management API, for example http://rabbitmq:15672. Leave empty to derive it from the amqp host in app/etc/env.php on port 15672. Credentials are always taken from env.php, never entered here.</comment>
                     <depends><field id="enabled">1</field></depends>
                 </field>
-                <field id="imgproxy_metrics_url" translate="label comment" type="text" sortOrder="40" showInDefault="1" canRestoreToDefault="1">
+                <field id="imgproxy_metrics_url" translate="label comment" type="text" sortOrder="40" showInDefault="1" canRestore="1">
                     <label>imgproxy Metrics URL</label>
                     <comment>URL of the imgproxy Prometheus endpoint, reachable from the PHP container. Start imgproxy with IMGPROXY_PROMETHEUS_BIND (for example ":4594") to publish it. This is a second listener and cannot share the port imgproxy serves images on, so it is not the IMGPROXY_BIND address. Metrics are served from any path on that binding, so the path below is a convention rather than a requirement. The OpenTelemetry metrics switch pushes to a collector instead and exposes nothing to read here. Leave empty to disable the imgproxy probe.</comment>
                     <depends><field id="enabled">1</field></depends>
                 </field>
-                <field id="frankenphp_metrics_url" translate="label comment" type="text" sortOrder="50" showInDefault="1" canRestoreToDefault="1">
+                <field id="frankenphp_metrics_url" translate="label comment" type="text" sortOrder="50" showInDefault="1" canRestore="1">
                     <label>FrankenPHP Metrics URL</label>
                     <comment>URL of a Caddy site block running the metrics handler on the FrankenPHP container, reachable from the PHP container — for example a Caddyfile block &quot;:2020 { metrics /metrics }&quot;. It carries the frankenphp_ metrics and, with the &quot;metrics&quot; global option set, Caddy's request metrics. Do not point this at the admin API on port 2019: it serves the same numbers but also accepts configuration changes and has no read-only mode. Leave empty to disable the FrankenPHP probe.</comment>
                     <depends><field id="enabled">1</field></depends>
