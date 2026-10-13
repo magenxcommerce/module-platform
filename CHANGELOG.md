@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/magenxcommerce/module-platform/compare/v1.3.4...v1.4.0) (2026-10-13)
+
+
+### Features
+
+* Add Security and Compatibility tabs ([#33](https://github.com/magenxcommerce/module-platform/issues/33)) ([dda5725](https://github.com/magenxcommerce/module-platform/commit/dda5725b584350aac0c555e2fc33cf9d29361464))
+
 ## [1.3.4](https://github.com/magenxcommerce/module-platform/compare/v1.3.3...v1.3.4) (2026-10-10)
 
 
