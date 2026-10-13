@@ -22,8 +22,9 @@ namespace Magenx\Platform\Model\Security;
  *   file and applies exactly that set on install. Applied.
  * - `composer.json` `extra.patches` and the file `extra.patches-file` names.
  *   Declared: applied on the next install, which may or may not have run.
- * - `m2-hotfixes/*.patch` — the directory Adobe Commerce Cloud applies on every
- *   build, and a common convention elsewhere. Present.
+ * - `patches/` and `m2-hotfixes/` — `*.patch` / `*.diff` kept where they were
+ *   applied by hand, and the directory Adobe Commerce Cloud applies on every
+ *   build. Present.
  * - Adobe's `vendor/bin/patch-status` downloads the monthly patches into
  *   `var/patch_metadata/.patch_diffs/` and their registry — each patch's file
  *   and the CVEs it closes — into `var/patch_metadata/.patch_registry_cache.json`.
@@ -33,7 +34,7 @@ namespace Magenx\Platform\Model\Security;
  *   below answers the same question without it.
  *
  * None of those says what the code holds now. So every patch file that can be
- * read — in m2-hotfixes/, patch-status's cache, or a local file a
+ * read — in patches/, m2-hotfixes/, patch-status's cache, or a local file a
  * composer-patches record names — is also checked hunk by hunk against the
  * files it changes
  * ({@see PatchVerifier}), and that answer outranks the record: `verified` when
@@ -54,6 +55,7 @@ class PatchEvidence
     public const NOT_IN_CODE = 'not_in_code';
     public const NO_EVIDENCE = 'no_evidence';
 
+    private const PATCH_DIR = 'patches';
     private const HOTFIX_DIR = 'm2-hotfixes';
 
     private const PATCH_STATUS_DIR = 'var/patch_metadata/.patch_diffs';
@@ -136,7 +138,11 @@ class PatchEvidence
         ]);
         $sources[array_key_last($sources)]['entries'] = count($this->registry);
 
-        $directories = [self::HOTFIX_DIR => 'm2_hotfixes', self::PATCH_STATUS_DIR => 'patch_status_cache'];
+        $directories = [
+            self::PATCH_DIR => 'patch_dir',
+            self::HOTFIX_DIR => 'm2_hotfixes',
+            self::PATCH_STATUS_DIR => 'patch_status_cache',
+        ];
         foreach ($directories as $dir => $source) {
             $listing = $this->files->listDirectory($dir);
             $patches = array_values(array_filter($listing['files'], [$this, 'isPatchFile']));

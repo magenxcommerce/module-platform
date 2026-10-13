@@ -86,6 +86,7 @@ class PatchEvidenceTest extends TestCase
                 'composer_patches_v2',
                 'composer_json',
                 'patch_status_registry',
+                'patch_dir',
                 'm2_hotfixes',
                 'patch_status_cache',
             ],
@@ -131,6 +132,20 @@ class PatchEvidenceTest extends TestCase
         $this->assertSame('ACSD-2026-09-001', $match['matches'][0]['patch_id']);
     }
 
+    public function testAPatchKeptInPatchesIsCheckedLikeAHotfix(): void
+    {
+        $evidence = $this->evidence([], ['patches/VULN-39341_2.4.8-p5.patch', 'patches/README.md'], [
+            'patches/VULN-39341_2.4.8-p5.patch' => self::PATCH,
+            'vendor/magento/framework/Escaper.php' => "<?php\nreturn htmlspecialchars(\$v);\n",
+        ]);
+
+        $match = $evidence->match(['VULN-39341']);
+
+        $this->assertSame(PatchEvidence::VERIFIED, $match['status']);
+        $this->assertSame('patch_dir', $match['matches'][0]['source']);
+        $this->assertCount(1, $match['matches']);
+    }
+
     public function testTheCodeOverridesARecordThatSaysApplied(): void
     {
         $evidence = $this->evidence(
@@ -161,7 +176,7 @@ class PatchEvidenceTest extends TestCase
 
     /**
      * @param array<string, array<mixed>> $json Path => decoded contents; anything else is absent.
-     * @param string[] $patchFiles Files in m2-hotfixes/ or patch-status's cache.
+     * @param string[] $patchFiles Files in patches/, m2-hotfixes/ or patch-status's cache.
      * @param array<string, string> $text Path => contents of patch and code files.
      */
     private function evidence(array $json, array $patchFiles = [], array $text = []): PatchEvidence

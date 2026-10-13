@@ -84,10 +84,10 @@ should.
 **From disk**, through Magento's filesystem: `composer.json` and `composer.lock`,
 `vendor/composer/installed.json` (composer-patches 1.x writes `extra.patches_applied`
 there), `patches.lock.json` (composer-patches 2.x), the file `extra.patches-file` names, and
-`m2-hotfixes/*.patch`. A patch record matches a bulletin when it names the isolated patch
-(`VULN-39341`, `2026-jul`) or the bulletin (`APSB26-146`). Each source is reported as
-`read`, `absent` or `unreadable`; the last is a hardened store keeping the PHP user out,
-which must not read as "no patches".
+`*.patch` / `*.diff` in `patches/` and `m2-hotfixes/` (top level only). A patch record
+matches a bulletin when it names the isolated patch (`VULN-39341`, `2026-jul`) or the
+bulletin (`APSB26-146`). Each source is reported as `read`, `absent` or `unreadable`; the
+last is a hardened store keeping the PHP user out, which must not read as "no patches".
 
 **From Adobe's `vendor/bin/patch-status`** (the Monthly Security Release Versioning Tool):
 it downloads the monthly patches into `var/patch_metadata/.patch_diffs/` and their registry
@@ -98,17 +98,18 @@ through `proc_open`, which a hardened store disables even on the CLI, so it is n
 code check below answers the same question without it.
 
 **From the code.** A record says a patch was applied; only the files it changes say it still
-is. Every patch file that can be read — in `m2-hotfixes/`, in patch-status's cache, or a
-local file a composer-patches record names — is parsed as a unified diff and each hunk is
-looked for in the file it targets: the after-image there means applied, the before-image
-means not. Lines are compared trimmed, so reindenting or CRLF does not count as unpatched.
-Adobe's composer layout (`vendor/magento/module-catalog/...`) and git layout
+is. Every patch file that can be read — in `patches/` or `m2-hotfixes/`, in patch-status's
+cache, or a local file a composer-patches record names — is parsed as a unified diff and
+each hunk is looked for in the file it targets: the after-image there means applied, the
+before-image means not. Lines are compared trimmed, so reindenting or CRLF does not count as
+unpatched. Adobe's composer layout (`vendor/magento/module-catalog/...`) and git layout
 (`app/code/Magento/Catalog/...`, `lib/internal/Magento/Framework/...`) both resolve to
 vendor/. Monthly patches build on each other, so before judging an earlier patch the later
 ones found applied are taken back out of an in-memory copy of the file, as patch-status does
 in a scratch directory. The code outranks every record: **Verified in code** closes the
-patch, **Not in code** or **Partially in code** keeps it open even when composer-patches says
-applied. A patch with no file on disk and no record is "No record found", never "missing".
+patch, **Not in code** or **Partially in code** keeps it open even when composer-patches
+says applied. A patch with no file on disk and no record is "No record found", never
+"missing".
 
 An isolated patch magento.watch lists only for other releases (its `appliesTo`) does not
 close a bulletin on this one unless the code shows it applied: the row says which release to
