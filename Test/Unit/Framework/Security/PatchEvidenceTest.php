@@ -146,6 +146,25 @@ class PatchEvidenceTest extends TestCase
         $this->assertCount(1, $match['matches']);
     }
 
+    public function testAComposerReferenceLosesOnlyItsLeadingDotSlash(): void
+    {
+        $evidence = $this->evidence(
+            ['composer.json' => ['extra' => ['patches' => ['magento/framework' => [
+                'VULN-39341' => './patches/vuln.patch',
+                'VULN-11111' => '.patches/hidden.patch',
+            ]]]]],
+            [],
+            [
+                'patches/vuln.patch' => self::PATCH,
+                '.patches/hidden.patch' => self::PATCH,
+                'vendor/magento/framework/Escaper.php' => "<?php\nreturn htmlspecialchars(\$v);\n",
+            ]
+        );
+
+        $this->assertSame(PatchEvidence::VERIFIED, $evidence->match(['VULN-39341'])['status']);
+        $this->assertSame(PatchEvidence::VERIFIED, $evidence->match(['VULN-11111'])['status']);
+    }
+
     public function testTheCodeOverridesARecordThatSaysApplied(): void
     {
         $evidence = $this->evidence(

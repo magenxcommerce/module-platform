@@ -151,7 +151,7 @@ is one deployment.
 |---|---|---|
 | `magenx_platform/general/enabled` | `1` | Master switch. Off means no backend is contacted at all |
 | `magenx_platform/general/timeout` | `3` | Connect and read timeout per probe, in seconds |
-| `magenx_platform/general/cache_ttl` | `10` | How long a snapshot is reused, so a held-down refresh cannot become a load generator |
+| `magenx_platform/general/cache_ttl` | `10` | How long a snapshot is reused, so a held-down refresh cannot become a load generator. Security and Compatibility keep theirs at least 300 s (`minimumTtl` in `etc/di.xml`); `0` switches every snapshot off |
 | `magenx_platform/general/auto_refresh` | `0` | Browser-side refresh interval; `0` is manual only |
 | `magenx_platform/collectors/enabled_collectors` | all but imgproxy | Which tabs to show. Deselect a backend this deployment does not run |
 | `magenx_platform/endpoints/nginx_status_url` | `http://nginx/nginx_status` | An nginx location running `stub_status` |

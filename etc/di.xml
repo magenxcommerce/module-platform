@@ -28,6 +28,20 @@
         </arguments>
     </type>
     <!--
+        Security and Compatibility read composer.lock, patch files and the vendor
+        code those patches touch: inputs that change on deploy, not between two
+        refreshes. Their snapshot lives at least this long, unless cache_ttl is 0.
+        bin/magento cache:clean magenx_platform forces a fresh read.
+    -->
+    <type name="Magenx\Platform\Model\CollectorRunner">
+        <arguments>
+            <argument name="minimumTtl" xsi:type="array">
+                <item name="security" xsi:type="number">300</item>
+                <item name="compatibility" xsi:type="number">300</item>
+            </argument>
+        </arguments>
+    </type>
+    <!--
         The Compatibility tab sits in the pool above and reaches EnvironmentVersions,
         which reads the version rows of the other tabs from that same pool. A real
         pool here would be a construction cycle; the proxy defers it to first use.

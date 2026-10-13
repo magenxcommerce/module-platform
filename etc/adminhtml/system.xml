@@ -40,7 +40,7 @@
                 <field id="cache_ttl" translate="label comment" type="text" sortOrder="30" showInDefault="1" canRestore="1">
                     <label>Result Cache (seconds)</label>
                     <validate>validate-digits</validate>
-                    <comment>How long a collected snapshot is reused before the backend is probed again. Stops a held-down refresh from hammering the stack. Set to 0 to always probe live.</comment>
+                    <comment>How long a collected snapshot is reused before the backend is probed again. Stops a held-down refresh from hammering the stack. Security and Compatibility keep theirs at least 300 seconds, since their inputs only change on deploy. Set to 0 to always probe live, on every tab.</comment>
                     <depends><field id="enabled">1</field></depends>
                 </field>
                 <field id="auto_refresh" translate="label comment" type="text" sortOrder="40" showInDefault="1" canRestore="1">

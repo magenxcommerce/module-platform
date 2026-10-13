@@ -128,7 +128,7 @@ class PatchEvidence
 
         $patchesFile = $composer['data']['extra']['patches-file'] ?? null;
         if (is_string($patchesFile) && $patchesFile !== '' && !str_contains($patchesFile, '..')) {
-            $declared = $this->files->readJson(ltrim($patchesFile, './'));
+            $declared = $this->files->readJson($this->relative($patchesFile));
             $this->add($sources, $entries, 'composer_patches_file', $declared, [$this, 'fromPatchesFile']);
         }
 
@@ -272,7 +272,7 @@ class PatchEvidence
      */
     private function checkCode(array $entry): array
     {
-        $reference = ltrim($entry['reference'], './');
+        $reference = $this->relative($entry['reference']);
         if ($reference === ''
             || str_contains($reference, '://')
             || str_contains($reference, '..')
@@ -292,6 +292,19 @@ class PatchEvidence
         }
 
         return $entry;
+    }
+
+    /**
+     * A path as composer.json writes it — `./patches/x.patch` — relative to
+     * the root. Only a leading `./` or `/` goes: a name that starts with a dot,
+     * `.patches/x.patch`, keeps it.
+     *
+     * @param string $path
+     * @return string
+     */
+    private function relative(string $path): string
+    {
+        return ltrim((string) preg_replace('#^(?:\./)+#', '', $path), '/');
     }
 
     /**

@@ -46,6 +46,12 @@ class PatchVerifier
     /** Adobe's largest isolated patches are a few hundred kilobytes. */
     private const MAX_PATCH_BYTES = 2097152;
 
+    /**
+     * Every target file read stays in memory for the request, so a patch that
+     * touches a large minified asset is judged unknown rather than read whole.
+     */
+    private const MAX_TARGET_BYTES = 4194304;
+
     /** Framework libraries that are packages of their own, not part of magento/framework. */
     private const FRAMEWORK_PACKAGES = ['Amqp', 'Bulk', 'MessageQueue'];
 
@@ -102,8 +108,9 @@ class PatchVerifier
             }
         }
 
+        $this->parsed[$patchPath] = $this->parse($patch['data']);
         $files = [];
-        foreach ($this->parse($patch['data']) as $diff) {
+        foreach ($this->parsed[$patchPath] as $diff) {
             $path = (string) ($diff['new_path'] ?? $diff['old_path']);
             $files[] = $this->verifyFile($diff, $package, array_merge([], ...($later[$path] ?? [])));
         }
@@ -118,7 +125,7 @@ class PatchVerifier
      * @param string $diff
      * @return array<int, array<string, mixed>>
      */
-    public function parse(string $diff): array
+    private function parse(string $diff): array
     {
         $files = [];
         $current = null;
@@ -345,9 +352,11 @@ class PatchVerifier
     {
         $length = count($needle);
         $last = count($haystack) - $length;
-        for ($start = 0; $start <= $last; $start++) {
-            if ($haystack[$start] !== $needle[0]) {
-                continue;
+        // array_keys() finds the candidate first lines in one C-level pass;
+        // only those are compared line by line.
+        foreach (array_keys($haystack, $needle[0], true) as $start) {
+            if ($start > $last) {
+                break;
             }
             for ($offset = 1; $offset < $length && $haystack[$start + $offset] === $needle[$offset]; $offset++);
             if ($offset === $length) {
@@ -368,7 +377,7 @@ class PatchVerifier
     private function lines(string $path): ?array
     {
         if (!array_key_exists($path, $this->lines)) {
-            $file = $this->files->readText($path);
+            $file = $this->files->readText($path, self::MAX_TARGET_BYTES);
             $this->lines[$path] = $file['data'] === null ? null : $this->significant(array_map(
                 'trim',
                 preg_split('/\r\n|\r|\n/', $file['data']) ?: []
@@ -387,7 +396,8 @@ class PatchVerifier
      */
     private function candidates(string $path, ?string $package): array
     {
-        if ($path === '' || str_contains($path, '..')) {
+        // Paths come from the patch file: only relative ones inside the root.
+        if ($path === '' || $path[0] === '/' || str_contains($path, '..')) {
             return [];
         }
 
