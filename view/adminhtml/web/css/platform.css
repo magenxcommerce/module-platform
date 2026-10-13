@@ -136,6 +136,8 @@
 .magenx-platform-card._status-unavailable { border-left-color: #8f8f8f; }
 .magenx-platform-card._status-error { border-left-color: #e22626; }
 
+.magenx-platform-card._wide { grid-column: 1 / -1; }
+
 .magenx-platform-card-title {
     border-bottom: 1px solid #ececec;
     font-size: 14px;
@@ -157,6 +159,8 @@
     color: #6f6f6f;
     flex: 1 1 55%;
     font-size: 13px;
+    min-width: 0;
+    overflow-wrap: break-word;
 }
 
 .magenx-platform-row-hint {
@@ -168,11 +172,19 @@
 }
 
 .magenx-platform-row-value {
+    /*
+     * overflow-wrap, not word-break: break-word. The latter lets the browser
+     * break between any two letters, so a flex row next to a long hint would
+     * squeeze the value to one character wide and print it vertically.
+     * overflow-wrap only breaks a word that cannot fit, and the 12ch floor
+     * keeps a short verdict on one line.
+     */
     flex: 0 1 45%;
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     font-size: 13px;
+    min-width: min(12ch, 45%);
+    overflow-wrap: break-word;
     text-align: right;
-    word-break: break-word;
 }
 
 .magenx-platform-row._status-warn .magenx-platform-row-value { color: #b34a00; font-weight: 600; }

@@ -59,11 +59,24 @@ class TabsTest extends TestCase
         $rows = $this->rows($tab);
 
         $this->assertSame(Status::ERROR, $tab['status']);
-        $this->assertSame([Status::WARN, 'Declared, not verified (composer_json)'], $rows['VULN-39341']);
+        $this->assertSame([Status::WARN, 'Declared, not verified'], $rows['VULN-39341']);
         $this->assertSame([Status::ERROR, 'No record found'], $rows['2026-jul']);
         $this->assertSame([Status::WARN, 'unreadable'], $rows['patches.lock.json']);
         $this->assertSame([Status::ERROR, 'CVE-2026-69246'], $rows['guzzlehttp/guzzle 7.9.2']);
-        $this->assertSame('2026-jul → VULN-39341', $rows['Isolated Patches'][1]);
+        $this->assertSame('2026-jul → VULN-39341', $rows['Apply Order'][1]);
+
+        $patches = array_values(array_filter(
+            $tab['sections'],
+            static fn (array $section): bool => $section['label'] === 'Required Patches'
+        ));
+        $this->assertCount(1, $patches, 'every bulletin shares one card');
+        $this->assertTrue($patches[0]['wide'] ?? false);
+        $this->assertSame(
+            ['VULN-39341', '2026-jul', 'Apply Order'],
+            array_column($patches[0]['rows'], 'label')
+        );
+        $this->assertStringContainsString('Found in: composer_json', $patches[0]['rows'][0]['hint']);
+        $this->assertStringContainsString('APSB26-146', $patches[0]['rows'][0]['hint']);
         $this->assertSame([Status::OK, 'Verified in code (3/3 hunks)'], $rows['patches/sep.patch']);
         $this->assertSame([Status::ERROR, 'Partially in code (1/4 hunks)'], $rows['patches/aug.patch']);
     }

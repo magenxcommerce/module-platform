@@ -25,6 +25,9 @@ use Magenx\Platform\Model\Security\SecurityReport;
  */
 class Security implements CollectorInterface
 {
+    /** Every open bulletin and its isolated patches share one card, not one card each. */
+    private const PATCH_SECTION = 'Required Patches';
+
     /** A store with hundreds of vulnerable packages has a different problem than a long tab. */
     private const MAX_PACKAGE_ROWS = 50;
 
@@ -32,7 +35,7 @@ class Security implements CollectorInterface
         PatchEvidence::VERIFIED => ['Verified in code', Status::OK],
         PatchEvidence::APPLIED => ['Applied', Status::OK],
         PatchEvidence::DECLARED => ['Declared, not verified', Status::WARN],
-        PatchEvidence::PRESENT => ['Hotfix file present', Status::WARN],
+        PatchEvidence::PRESENT => ['Patch file present', Status::WARN],
         PatchEvidence::NO_EVIDENCE => ['No record found', Status::ERROR],
         PatchEvidence::PARTIAL => ['Partially in code', Status::ERROR],
         PatchEvidence::NOT_IN_CODE => ['Not in code', Status::ERROR],
@@ -79,13 +82,14 @@ class Security implements CollectorInterface
         $result->setSummary((string) $report['summary']);
 
         $this->addRelease($result, $report);
+        $result->setWide(self::PATCH_SECTION);
         foreach ($report['open_bulletins'] as $bulletin) {
             $this->addBulletin($result, $bulletin);
         }
         if ($report['apply_order'] !== []) {
             $result->add(
+                self::PATCH_SECTION,
                 'Apply Order',
-                'Isolated Patches',
                 implode(' → ', $report['apply_order']),
                 Status::ERROR,
                 'Not cumulative: each is needed, applied oldest bulletin first. Check each bulletin for '
@@ -161,40 +165,44 @@ class Security implements CollectorInterface
      */
     private function addBulletin(Result $result, array $bulletin): void
     {
-        $section = sprintf(
-            '%s · %s · %s',
+        // The bulletin and its CVEs go in the hint, so the value column holds
+        // only the verdict and stays wide enough to read on one line.
+        $about = sprintf(
+            '%s · %s · %s. %s',
             $bulletin['id'],
             $bulletin['severity'] ?? 'unrated',
-            $bulletin['published_date'] ?? 'undated'
+            $bulletin['published_date'] ?? 'undated',
+            implode(', ', $bulletin['cves'])
         );
-        $cves = implode(', ', $bulletin['cves']);
 
         if ($bulletin['isolated_patches'] === []) {
             $result->add(
-                $section,
-                'Fix',
+                self::PATCH_SECTION,
+                (string) $bulletin['id'],
                 $bulletin['fixed_in'] !== null ? 'Upgrade to ' . $bulletin['fixed_in'] : 'No fix published yet',
                 Status::ERROR,
-                $cves
+                $about
             );
 
             return;
         }
 
         foreach ($bulletin['isolated_patches'] as $patch) {
-            [$label, $status] = self::EVIDENCE[$patch['evidence']] ?? self::EVIDENCE[PatchEvidence::NO_EVIDENCE];
+            [$value, $status] = self::EVIDENCE[$patch['evidence']] ?? self::EVIDENCE[PatchEvidence::NO_EVIDENCE];
             $sources = array_unique(array_column($patch['matched_records'], 'source'));
-            $value = $sources === [] ? $label : sprintf('%s (%s)', $label, implode(', ', $sources));
-            $hint = trim($cves . ' ' . ($patch['url'] ?? ''));
+            $hint = trim($about . ' ' . ($patch['url'] ?? ''));
+            if ($sources !== []) {
+                $hint .= ' Found in: ' . implode(', ', $sources) . '.';
+            }
             if (!($patch['applies_to_installed'] ?? true) && $patch['evidence'] !== PatchEvidence::VERIFIED) {
                 $value = sprintf(
-                    'Not published for this release — upgrade to %s first',
+                    'Upgrade to %s first',
                     $patch['requires_release'] ?? $bulletin['upgrade_to'] ?? 'a supported release'
                 );
                 $status = Status::ERROR;
-                $hint = 'Adobe lists this isolated patch only for releases this store is not on. ' . $hint;
+                $hint = 'Adobe publishes this isolated patch only for other releases. ' . $hint;
             }
-            $result->add($section, (string) $patch['id'], $value, $status, $hint);
+            $result->add(self::PATCH_SECTION, (string) $patch['id'], $value, $status, $hint);
         }
     }
 
