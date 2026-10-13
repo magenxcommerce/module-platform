@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.3](https://github.com/magenxcommerce/module-platform/compare/v1.4.2...v1.4.3) (2026-10-13)
+
+
+### Bug Fixes
+
+* one Required Patches card for every bulletin, stop squeezing row values ([#41](https://github.com/magenxcommerce/module-platform/issues/41)) ([a78240a](https://github.com/magenxcommerce/module-platform/commit/a78240a07c973ad8a452000db5b066ab4b17f71c))
+
 ## [1.4.2](https://github.com/magenxcommerce/module-platform/compare/v1.4.1...v1.4.2) (2026-10-13)
 
 
