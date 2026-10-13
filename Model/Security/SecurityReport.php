@@ -16,9 +16,12 @@ namespace Magenx\Platform\Model\Security;
  *
  * - **The release.** Adobe's bulletins come from magento.watch and are facts
  *   about 2.4.8-p5, whoever runs it. Each is joined with what this
- *   installation records about the isolated patch that closes it, and every
- *   bulletin carries the records that moved it — "no_evidence" is never
- *   written as "missing", because a patch applied by hand leaves none.
+ *   installation records about the isolated patch that closes it — and, where
+ *   the patch file is on disk, with whether its changes are in the code — and
+ *   every bulletin carries the records that moved it. "no_evidence" is never
+ *   written as "missing", because a patch applied by hand leaves none. An
+ *   isolated patch Adobe did not publish for this release does not close the
+ *   bulletin here unless the code shows it applied: the release has to move.
  * - **The locked packages.** Advisories from Packagist's database, checked
  *   against composer.lock: what `composer audit` would say.
  *
@@ -30,13 +33,21 @@ class SecurityReport
 {
     private const MAX_RECORDS = 100;
 
-    /** Bulletin-level outcome of joining a bulletin with local evidence. */
+    private const MAX_CHECKED_FILES = 100;
+
+    /** Bulletin-level outcome of joining a bulletin with local evidence, strongest first. */
     private const BULLETIN_STATUS = [
+        PatchEvidence::VERIFIED => 'verified_in_code',
         PatchEvidence::APPLIED => 'patched',
         PatchEvidence::DECLARED => 'declared_not_verified',
         PatchEvidence::PRESENT => 'hotfix_file_present',
         PatchEvidence::NO_EVIDENCE => 'no_evidence',
+        PatchEvidence::PARTIAL => 'partially_applied',
+        PatchEvidence::NOT_IN_CODE => 'not_in_code',
     ];
+
+    /** Evidence that closes an isolated patch, so it leaves the apply order. */
+    private const CLOSED = [PatchEvidence::VERIFIED, PatchEvidence::APPLIED];
 
     private InstalledRelease $installedRelease;
 
@@ -87,7 +98,11 @@ class SecurityReport
             'status' => 'unknown',
             'open_bulletins' => [],
             'apply_order' => [],
-            'patch_records' => ['sources' => $records['sources'], 'total' => count($records['entries'])],
+            'patch_records' => [
+                'sources' => $records['sources'],
+                'total' => count($records['entries']),
+                'checked' => $this->checkedFiles($records['entries']),
+            ],
         ];
         if ($listRecords) {
             $report['patch_records']['entries'] = array_slice($records['entries'], 0, self::MAX_RECORDS);
@@ -127,7 +142,7 @@ class SecurityReport
         $bulletins = [];
         foreach ((array) ($security['vulnerableTo'] ?? []) as $bulletin) {
             if (is_array($bulletin)) {
-                $bulletins[] = $this->joinBulletin($bulletin);
+                $bulletins[] = $this->joinBulletin($bulletin, $release['version']);
             }
         }
 
@@ -164,16 +179,46 @@ class SecurityReport
     }
 
     /**
+     * Every patch file whose code was checked, and what the code said.
+     *
+     * @param array<int, array<string, mixed>> $entries
+     * @return array<int, array<string, mixed>>
+     */
+    private function checkedFiles(array $entries): array
+    {
+        $checked = [];
+        foreach ($entries as $entry) {
+            if (!is_array($entry['code'] ?? null)) {
+                continue;
+            }
+            $checked[$entry['reference'] . '|' . $entry['package']] = [
+                'path' => $entry['reference'],
+                'source' => $entry['source'],
+                'package' => $entry['package'],
+                'state' => $entry['code']['state'],
+                'hunks' => $entry['code']['hunks'],
+                'applied' => $entry['code']['applied'],
+                'not_applied' => $entry['code']['not_applied'],
+                'reason' => $entry['code']['reason'] ?? null,
+            ];
+        }
+
+        return array_slice(array_values($checked), 0, self::MAX_CHECKED_FILES);
+    }
+
+    /**
      * One open bulletin, with the evidence for each of its isolated patches.
      *
      * @param array<string, mixed> $bulletin
+     * @param string $version The installed release.
      * @return array<string, mixed>
      */
-    private function joinBulletin(array $bulletin): array
+    private function joinBulletin(array $bulletin, string $version): array
     {
         $id = (string) ($bulletin['id'] ?? '');
         $patches = [];
         $weakest = null;
+        $upgradeTo = null;
 
         foreach ((array) ($bulletin['isolatedPatches'] ?? []) as $patch) {
             if (!is_array($patch) || !is_string($patch['id'] ?? null)) {
@@ -183,24 +228,39 @@ class SecurityReport
             // saved as "APSB26-73_2.4.8-p5.patch" is evidence for that bulletin
             // even though it never names "2026-jul".
             $match = $this->patchEvidence->match([$patch['id'], $id]);
+            $appliesTo = array_values(array_filter((array) ($patch['appliesTo'] ?? []), 'is_string'));
+            $applies = $appliesTo === [] || in_array($version, $appliesTo, true);
+            $requires = $applies ? null : $this->sameLine($version, $appliesTo);
             $patches[] = [
                 'id' => $patch['id'],
                 'url' => $patch['url'] ?? null,
                 'evidence' => $match['status'],
+                'applies_to_installed' => $applies,
+                'requires_release' => $requires,
                 'matched_records' => array_map(
                     static fn (array $entry): array => [
                         'source' => $entry['source'],
                         'package' => $entry['package'],
                         'description' => $entry['description'],
+                        'code' => is_array($entry['code'] ?? null) ? [
+                            'state' => $entry['code']['state'],
+                            'hunks' => $entry['code']['hunks'],
+                            'applied' => $entry['code']['applied'],
+                        ] : null,
                     ],
                     $match['matches']
                 ),
             ];
             $weakest = $this->weaker($weakest, $match['status']);
+            if (!$applies && $match['status'] !== PatchEvidence::VERIFIED) {
+                $upgradeTo ??= $requires ?? ($appliesTo[0] ?? null);
+            }
         }
 
         if ($patches === []) {
             $status = ($bulletin['fixedIn'] ?? null) !== null ? 'upgrade_required' : 'no_fix_published';
+        } elseif ($upgradeTo !== null) {
+            $status = 'upgrade_required';
         } else {
             $status = self::BULLETIN_STATUS[$weakest ?? PatchEvidence::NO_EVIDENCE];
         }
@@ -211,13 +271,16 @@ class SecurityReport
             'published_date' => $bulletin['publishedDate'] ?? null,
             'cves' => array_values((array) ($bulletin['cves'] ?? [])),
             'fixed_in' => $bulletin['fixedIn'] ?? null,
+            'upgrade_to' => $upgradeTo,
             'isolated_patches' => $patches,
             'local_status' => $status,
         ];
     }
 
     /**
-     * The isolated patches not yet recorded as applied, oldest bulletin first.
+     * The isolated patches not yet recorded or verified as applied, oldest
+     * bulletin first. A patch not published for this release is left out: it
+     * goes on after the upgrade its bulletin names, not before.
      *
      * The API lists bulletins newest first. Adobe's isolated patches are not
      * cumulative and are meant to go on in publication order, so the order is
@@ -231,7 +294,10 @@ class SecurityReport
         $order = [];
         foreach (array_reverse($bulletins) as $bulletin) {
             foreach ($bulletin['isolated_patches'] as $patch) {
-                if ($patch['evidence'] !== PatchEvidence::APPLIED && !in_array($patch['id'], $order, true)) {
+                if (!in_array($patch['evidence'], self::CLOSED, true)
+                    && $patch['applies_to_installed']
+                    && !in_array($patch['id'], $order, true)
+                ) {
                     $order[] = $patch['id'];
                 }
             }
@@ -255,10 +321,16 @@ class SecurityReport
         }
 
         $statuses = array_column($bulletins, 'local_status');
-        if (array_diff($statuses, ['patched']) === []) {
+        if (array_diff($statuses, ['verified_in_code']) === []) {
+            return 'patched_verified';
+        }
+        if (array_diff($statuses, ['verified_in_code', 'patched']) === []) {
             return 'patched_per_local_records';
         }
-        if (array_diff($statuses, ['patched', 'declared_not_verified', 'hotfix_file_present']) === []) {
+        if (array_diff(
+            $statuses,
+            ['verified_in_code', 'patched', 'declared_not_verified', 'hotfix_file_present']
+        ) === []) {
             return 'possibly_patched';
         }
 
@@ -275,11 +347,20 @@ class SecurityReport
     {
         $open = array_filter(
             $bulletins,
-            static fn (array $bulletin): bool => $bulletin['local_status'] !== 'patched'
+            static fn (array $bulletin): bool => !in_array(
+                $bulletin['local_status'],
+                ['patched', 'verified_in_code'],
+                true
+            )
         );
 
         return match ($status) {
             'secure' => sprintf('%s has no open security bulletins.', $version),
+            'patched_verified' => sprintf(
+                '%s is affected by %d bulletin(s); every isolated patch is verified in the code.',
+                $version,
+                count($bulletins)
+            ),
             'patched_per_local_records' => sprintf(
                 '%s is affected by %d bulletin(s); local records show every isolated patch applied.',
                 $version,
@@ -287,7 +368,7 @@ class SecurityReport
             ),
             'eol' => sprintf('%s is end of life and receives no further security fixes.', $version),
             default => sprintf(
-                '%s is affected by %d bulletin(s); %d without an applied-patch record: %s.',
+                '%s is affected by %d bulletin(s); %d not verified or recorded as patched: %s.',
                 $version,
                 count($bulletins),
                 count($open),
@@ -313,6 +394,26 @@ class SecurityReport
                 count($advisories['vulnerable']),
                 $advisories['checked']
             );
+    }
+
+    /**
+     * The release in $candidates on the installed one's line: 2.4.8-p5 for
+     * 2.4.8-p2. Null when the list carries none.
+     *
+     * @param string $version
+     * @param string[] $candidates
+     * @return string|null
+     */
+    private function sameLine(string $version, array $candidates): ?string
+    {
+        $base = explode('-', $version, 2)[0];
+        foreach ($candidates as $candidate) {
+            if (explode('-', $candidate, 2)[0] === $base) {
+                return $candidate;
+            }
+        }
+
+        return null;
     }
 
     /**

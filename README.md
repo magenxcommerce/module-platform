@@ -45,7 +45,7 @@ log line.
 | **PHP / FPM** | `opcache_get_status()` and friends in-process, plus the php-fpm status page | Every block OPcache publishes — memory and free memory, wasted memory against the percentage it restarts at, the `cache_full` flag, the interned string buffer, cached scripts and cached keys, hit rate with the counters behind it, blacklist misses, the three restart causes counted separately, a restart in flight, when the cache started and last emptied, JIT and its buffer, and preloading — missing required extensions and missing recommended ones (`redis`, `igbinary`), every field the FPM status page publishes — pool, process manager, start time and uptime, accepted connections with their average rate, the listen queue live and at its high-water mark against the socket backlog, idle/active/total and peak-active processes, `max children reached`, slow requests and memory peak — plus the hardening reads: the user FPM runs as, every path it can write measured against the `tmp/` + `var/` + `pub/media/` allowlist, which of `auth.json`, `.git`, `.github`, `deploy*` and the PHP user's home dotfiles it can read, whether process-spawning functions are disabled, and whether cron is reachable — plus host load and disk |
 | **Nginx** | `stub_status` | Active connections, dropped connections, requests per connection, worker read/write/wait state. The endpoint URL rides in the tab's summary line rather than a card of its own |
 | **imgproxy** | Prometheus `/metrics` | Error rate and errors split by type, 5xx share of requests, worker utilization, the queue/downloading/processing spans — which separate a saturated imgproxy from a slow origin from an expensive image — and libvips memory against its peak |
-| **Security** | magento.watch, Packagist's advisory API, and composer files read from disk | The release's support window; each open Adobe bulletin with its isolated patch coloured by evidence — applied, declared, hotfix file present, or no record — and the order they go on in; which patch-record sources could be read; locked packages with a known advisory |
+| **Security** | magento.watch, Packagist's advisory API, and composer files read from disk | The release's support window; each open Adobe bulletin with its isolated patch coloured by evidence — verified in code, applied, declared, patch file present, partially or not in code, or no record — and the order they go on in; which patch-record sources could be read; every patch file on disk checked hunk by hunk against the code; locked packages with a known advisory |
 | **Compatibility** | magento.watch, the Mage-OS mirror, Packagist metadata, `composer.lock`, and the version rows of the other tabs | For the installed release and each upgrade candidate: PHP against the release's composer constraint and its tested versions, the database, search, Redis and RabbitMQ against their tested versions, and every third-party package whose requirements exclude what the release pins; then direct dependencies with a newer stable release |
 | **FrankenPHP** | Caddy `metrics` handler | Regular-thread utilization with worker threads taken out, the request queue waiting for a free PHP thread, per-worker ready/busy/queue/crashes, OPcache restarts by reason (PHP 8.4+), and — with Caddy's `metrics` global option — requests in flight, average request time and 5xx share |
 
@@ -84,11 +84,28 @@ should.
 **From disk**, through Magento's filesystem: `composer.json` and `composer.lock`,
 `vendor/composer/installed.json` (composer-patches 1.x writes `extra.patches_applied`
 there), `patches.lock.json` (composer-patches 2.x), the file `extra.patches-file` names, and
-`m2-hotfixes/*.patch`. A patch record matches a bulletin when it names the isolated patch
-(`VULN-39341`, `2026-jul`) or the bulletin (`APSB26-146`). Each source is reported as
-`read`, `absent` or `unreadable`; the last is a hardened store keeping the PHP user out,
-which must not read as "no patches". A patch applied by hand with `patch -p1` leaves no
-record, so its absence is "No record found", never "missing".
+`*.patch` / `*.diff` in the patch directories (Stores → Configuration → Magenx → Platform Overview → Security &
+Compatibility → Patch Directories, `patches,m2-hotfixes` by default, one level of subfolders
+read). A patch record matches a bulletin when it names the isolated patch (`VULN-39341`,
+`2026-jul`) or the bulletin (`APSB26-146`). Each source is reported as `read`, `absent` or
+`unreadable`; the last is a hardened store keeping the PHP user out, which must not read as
+"no patches".
+
+**From the code.** A record says a patch was applied; only the files it changes say it still
+is. Every patch file that can be read — in a patch directory, or a local file a
+composer-patches record names — is parsed as a unified diff and each hunk is looked for in
+the file it targets: the after-image there means applied, the before-image means not. Lines
+are compared trimmed, so reindenting or CRLF does not count as unpatched. Adobe's composer
+layout (`vendor/magento/module-catalog/...`) and git layout (`app/code/Magento/Catalog/...`,
+`lib/internal/Magento/Framework/...`) both resolve to vendor/. The code outranks every
+record: **Verified in code** closes the patch, **Not in code** or **Partially in code** keeps
+it open even when composer-patches says applied. This is what credits a patch applied by hand
+with `patch -p1` or `git apply` — keep the file in `patches/` after applying it. A patch with
+no file on disk and no record is "No record found", never "missing".
+
+An isolated patch magento.watch lists only for other releases (its `appliesTo`) does not
+close a bulletin on this one unless the code shows it applied: the row says which release to
+upgrade to first, and the patch is left out of the apply order.
 
 **From public services**, over https only, cached for an hour in this module's cache type:
 
