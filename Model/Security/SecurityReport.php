@@ -227,7 +227,10 @@ class SecurityReport
             // The bulletin id is matched as well as the patch id: a patch file
             // saved as "APSB26-73_2.4.8-p5.patch" is evidence for that bulletin
             // even though it never names "2026-jul".
-            $match = $this->patchEvidence->match([$patch['id'], $id]);
+            $match = $this->patchEvidence->match(
+                [$patch['id'], $id],
+                array_values(array_filter((array) ($bulletin['cves'] ?? []), 'is_string'))
+            );
             $appliesTo = array_values(array_filter((array) ($patch['appliesTo'] ?? []), 'is_string'));
             $applies = $appliesTo === [] || in_array($version, $appliesTo, true);
             $requires = $applies ? null : $this->sameLine($version, $appliesTo);
@@ -242,6 +245,7 @@ class SecurityReport
                         'source' => $entry['source'],
                         'package' => $entry['package'],
                         'description' => $entry['description'],
+                        'patch_id' => $entry['patch_id'] ?? null,
                         'code' => is_array($entry['code'] ?? null) ? [
                             'state' => $entry['code']['state'],
                             'hunks' => $entry['code']['hunks'],

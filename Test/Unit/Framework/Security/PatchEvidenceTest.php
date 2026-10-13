@@ -82,7 +82,16 @@ class PatchEvidenceTest extends TestCase
 
         $this->assertSame(PatchEvidence::NO_EVIDENCE, $evidence->match(['VULN-39341'])['status']);
         $this->assertSame(
-            ['composer_patches_v1', 'composer_patches_v2', 'composer_json', 'patch_dir', 'm2_hotfixes'],
+            [
+                'composer_patches_v1',
+                'composer_patches_v2',
+                'composer_json',
+                'patch_status_registry',
+                'patch_status_log',
+                'patch_dir',
+                'm2_hotfixes',
+                'patch_status_cache',
+            ],
             array_column($evidence->collect()['sources'], 'source')
         );
     }
@@ -115,6 +124,52 @@ class PatchEvidenceTest extends TestCase
         );
         $this->assertSame(PatchEvidence::NO_EVIDENCE, $evidence->match(['2026-aug'])['status']);
         $this->assertSame(PatchEvidence::NO_EVIDENCE, $evidence->match(['2026-jan'])['status']);
+    }
+
+    public function testADiffPatchStatusDownloadedIsNoEvidenceUntilTheCodeHasIt(): void
+    {
+        $registry = ['var/patch_metadata/.patch_registry_cache.json' => ['patches' => [
+            'ACSD-2026-09-001' => ['file_name' => '248p5-2026-09-001-CE.diff', 'cves' => ['CVE-2026-76200']],
+        ]]];
+        $cached = ['var/patch_metadata/.patch_diffs/248p5-2026-09-001-CE.diff'];
+        $unpatched = [$cached[0] => self::PATCH, 'vendor/magento/framework/Escaper.php' => "<?php\nreturn \$v;\n"];
+
+        $missing = $this->evidence($registry, $cached, ['var/patch_metadata/.patch_diffs/other.diff' => ''])
+            ->match(['2026-sep', 'APSB26-138'], ['CVE-2026-76200']);
+        $this->assertSame(PatchEvidence::NO_EVIDENCE, $missing['status']);
+        $this->assertSame('patch_status_cache', $missing['matches'][0]['source']);
+
+        $this->assertSame(
+            PatchEvidence::NOT_IN_CODE,
+            $this->evidence($registry, $cached, $unpatched)->match(['nothing-by-name'], ['cve-2026-76200'])['status']
+        );
+
+        $patched = [$cached[0] => self::PATCH, 'vendor/magento/framework/Escaper.php' => "<?php\nreturn htmlspecialchars(\$v);\n"];
+        $match = $this->evidence($registry, $cached, $patched)->match(['2026-sep'], ['CVE-2026-76200']);
+        $this->assertSame(PatchEvidence::VERIFIED, $match['status']);
+        $this->assertSame('ACSD-2026-09-001', $match['matches'][0]['patch_id']);
+    }
+
+    public function testOnlyTheLastPatchStatusRunCounts(): void
+    {
+        $evidence = $this->evidence(
+            ['var/patch_metadata/.patch_registry_cache.json' => ['patches' => [
+                'P-JUL' => ['file_name' => '248p5-2026-07-001-CE.diff', 'cves' => ['CVE-2026-48356']],
+                'P-AUG' => ['file_name' => '248p5-2026-08-001-CE.diff', 'cves' => ['CVE-2026-48414']],
+            ]]],
+            [],
+            ['var/log/patch_status.log' => implode("\n", [
+                '[2026-10-01T10:00:00+00:00] base=2.4.8-p5 applied=[] missing=[P-JUL,P-AUG] unknown=[]',
+                '[2026-10-13T15:44:00+00:00] base=2.4.8-p5 applied=[P-JUL] missing=[P-AUG] unknown=[]',
+                '[2026-10-13T15:44:00+00:00] UNKNOWN P-X:',
+                'FWD:',
+            ])]
+        );
+
+        $july = $evidence->match(['2026-jul'], ['CVE-2026-48356']);
+        $this->assertSame(PatchEvidence::APPLIED, $july['status']);
+        $this->assertStringContainsString('2026-10-13', $july['matches'][0]['description']);
+        $this->assertSame(PatchEvidence::NOT_IN_CODE, $evidence->match(['2026-aug'], ['CVE-2026-48414'])['status']);
     }
 
     public function testTheCodeOverridesARecordThatSaysApplied(): void

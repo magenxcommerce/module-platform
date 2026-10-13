@@ -25,6 +25,12 @@ namespace Magenx\Platform\Model\Security;
  * which on a composer-built store live under vendor/ as well. A composer-patches
  * record knows its package, so its paths are also tried relative to that
  * package's directory.
+ *
+ * Monthly patches build on each other: a later one may rewrite lines an
+ * earlier one added, so the earlier one's after-image is gone even though it
+ * was applied. Given the other patches kept beside it, a hunk whose after-image
+ * is the before-image of a sibling hunk found applied counts as applied — what
+ * Adobe's patch-status does by reverting the later patches in a scratch copy.
  */
 class PatchVerifier
 {
@@ -51,6 +57,9 @@ class PatchVerifier
     /** @var array<string, array<string, mixed>> */
     private array $verified = [];
 
+    /** @var array<string, array<int, array<string, mixed>>> Patch path => parsed diff, [] when unreadable. */
+    private array $parsed = [];
+
     /**
      * @param ProjectFiles $files
      */
@@ -70,11 +79,13 @@ class PatchVerifier
      *
      * @param string $patchPath
      * @param string|null $package The composer package a composer-patches record applies it to.
+     * @param string[] $siblings Other patch files kept with it, which may have built on it.
      * @return array<string, mixed>
      */
-    public function verify(string $patchPath, ?string $package = null): array
+    public function verify(string $patchPath, ?string $package = null, array $siblings = []): array
     {
-        $key = $patchPath . '|' . $package;
+        $siblings = array_values(array_diff($siblings, [$patchPath]));
+        $key = $patchPath . '|' . $package . '|' . implode(',', $siblings);
         if (isset($this->verified[$key])) {
             return $this->verified[$key];
         }
@@ -84,9 +95,17 @@ class PatchVerifier
             return $this->verified[$key] = $this->result([], 'patch file ' . $patch['state']);
         }
 
+        $later = [];
+        foreach ($siblings as $sibling) {
+            foreach ($this->parsedFile($sibling) as $diff) {
+                $later[(string) ($diff['new_path'] ?? $diff['old_path'])][] = $diff['hunks'];
+            }
+        }
+
         $files = [];
         foreach ($this->parse($patch['data']) as $diff) {
-            $files[] = $this->verifyFile($diff, $package);
+            $path = (string) ($diff['new_path'] ?? $diff['old_path']);
+            $files[] = $this->verifyFile($diff, $package, array_merge([], ...($later[$path] ?? [])));
         }
 
         return $this->verified[$key] = $this->result($files, $files === [] ? 'no hunks found' : null);
@@ -167,11 +186,28 @@ class PatchVerifier
     }
 
     /**
+     * A sibling patch, parsed once.
+     *
+     * @param string $patchPath
+     * @return array<int, array<string, mixed>>
+     */
+    private function parsedFile(string $patchPath): array
+    {
+        if (!isset($this->parsed[$patchPath])) {
+            $patch = $this->files->readText($patchPath, self::MAX_PATCH_BYTES);
+            $this->parsed[$patchPath] = $patch['data'] === null ? [] : $this->parse($patch['data']);
+        }
+
+        return $this->parsed[$patchPath];
+    }
+
+    /**
      * @param array<string, mixed> $diff
      * @param string|null $package
+     * @param array<int, array{old: string[], new: string[]}> $later Sibling hunks on the same file.
      * @return array<string, mixed>
      */
-    private function verifyFile(array $diff, ?string $package): array
+    private function verifyFile(array $diff, ?string $package, array $later = []): array
     {
         $path = $diff['new_path'] ?? $diff['old_path'];
         $resolved = null;
@@ -188,6 +224,9 @@ class PatchVerifier
         $notApplied = 0;
         foreach ($diff['hunks'] as $hunk) {
             $state = $this->hunkState($hunk, $lines, $diff['old_path'] === null, $diff['new_path'] === null);
+            if ($state === self::HUNK_UNKNOWN && $lines !== null && $this->superseded($hunk, $later, $lines)) {
+                $state = self::HUNK_APPLIED;
+            }
             $applied += (int) ($state === self::HUNK_APPLIED);
             $notApplied += (int) ($state === self::HUNK_NOT_APPLIED);
         }
@@ -241,6 +280,37 @@ class PatchVerifier
     }
 
     /**
+     * Whether this hunk is in the code once the later patches found applied
+     * are taken back out of a copy of it — the same question patch-status
+     * answers by reverting them in a scratch directory.
+     *
+     * @param array{old: string[], new: string[]} $hunk
+     * @param array<int, array{old: string[], new: string[]}> $later
+     * @param string[] $lines
+     * @return bool
+     */
+    private function superseded(array $hunk, array $later, array $lines): bool
+    {
+        $new = $this->significant($hunk['new']);
+        if ($new === [] || $later === []) {
+            return false;
+        }
+
+        $reverted = false;
+        foreach ($later as $candidate) {
+            $before = $this->significant($candidate['old']);
+            $after = $this->significant($candidate['new']);
+            $at = $after === [] || $before === $after ? null : $this->indexOf($lines, $after);
+            if ($at !== null) {
+                array_splice($lines, $at, count($after), $before);
+                $reverted = true;
+            }
+        }
+
+        return $reverted && $this->contains($lines, $new);
+    }
+
+    /**
      * Blank lines dropped: patch tools and editors disagree about them more
      * than about anything else, and they never carry a fix.
      *
@@ -261,6 +331,18 @@ class PatchVerifier
      */
     private function contains(array $haystack, array $needle): bool
     {
+        return $this->indexOf($haystack, $needle) !== null;
+    }
+
+    /**
+     * Where $needle first appears in $haystack as consecutive lines.
+     *
+     * @param string[] $haystack
+     * @param string[] $needle
+     * @return int|null
+     */
+    private function indexOf(array $haystack, array $needle): ?int
+    {
         $length = count($needle);
         $last = count($haystack) - $length;
         for ($start = 0; $start <= $last; $start++) {
@@ -269,11 +351,11 @@ class PatchVerifier
             }
             for ($offset = 1; $offset < $length && $haystack[$start + $offset] === $needle[$offset]; $offset++);
             if ($offset === $length) {
-                return true;
+                return $start;
             }
         }
 
-        return false;
+        return null;
     }
 
     /**
