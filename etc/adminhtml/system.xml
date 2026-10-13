@@ -96,10 +96,6 @@
                     <comment>Lets the Security and Compatibility tabs ask magento.watch about this release, Packagist about the locked packages, and the Mage-OS mirror for the composer manifest of the release an upgrade would install. Only the release string and package names are sent, over https, and answers are kept for an hour. When No, both tabs report what this installation records and nothing else.</comment>
                     <depends><field id="enabled">1</field></depends>
                 </field>
-                <field id="patch_dirs" translate="label comment" type="text" sortOrder="20" showInDefault="1" canRestore="1">
-                    <label>Patch Directories</label>
-                    <comment>Comma-separated directories, relative to the Magento root, where isolated patch files (*.patch, *.diff) are kept — one level of subfolders is read too. The Security tab checks each file's hunks against the vendor code it changes, so a patch applied with patch -p1 or git apply shows as "Verified in code", and one whose record says applied but whose code says otherwise shows as "Not in code". Files are read, never executed.</comment>
-                </field>
             </group>
         </section>
     </system>

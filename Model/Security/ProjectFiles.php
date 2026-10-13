@@ -18,9 +18,10 @@ use Magento\Framework\Serialize\Serializer\Json;
  * Everything the Security and Compatibility tabs know about this installation
  * that Magento does not already hold comes from here: composer.json and
  * composer.lock, composer-patches' records, the installed-packages manifest,
- * the patch directories and the vendor files those patches change. Nothing is executed — `composer audit` and
- * `magento-patches status` both need process execution, which a hardened store
- * disables for the PHP user, and should.
+ * the patch files kept on disk and the vendor files those patches change.
+ * Nothing is executed — `composer audit`, `magento-patches status` and Adobe's
+ * `patch-status` all need process execution, which a hardened store disables
+ * for the PHP user, and should.
  *
  * Every read reports a state beside its data: `read`, `absent`, or
  * `unreadable`. The last is a hardened store keeping the PHP user out of a
@@ -140,43 +141,6 @@ class ProjectFiles
         }
 
         return ['files' => $files, 'state' => 'read', 'path' => $directory];
-    }
-
-    /**
-     * The files under one directory, descending $depth levels into
-     * subdirectories — an Adobe patch archive unpacks into a folder of its own.
-     *
-     * @param string $directory
-     * @param int $depth
-     * @param int $limit
-     * @return array{files: string[], state: string, path: string}
-     */
-    public function listFiles(string $directory, int $depth = 1, int $limit = 500): array
-    {
-        $listing = $this->listDirectory($directory);
-        if ($listing['state'] !== 'read') {
-            return $listing;
-        }
-
-        $root = $this->filesystem->getDirectoryRead(DirectoryList::ROOT);
-        $files = [];
-        foreach ($listing['files'] as $path) {
-            if (count($files) >= $limit) {
-                break;
-            }
-            try {
-                if ($root->isFile($path)) {
-                    $files[] = $path;
-                } elseif ($depth > 0 && $root->isDirectory($path)) {
-                    array_push($files, ...$this->listFiles($path, $depth - 1, $limit - count($files))['files']);
-                }
-            } catch (\Throwable) {
-                continue;
-            }
-        }
-        sort($files);
-
-        return ['files' => array_slice($files, 0, $limit), 'state' => 'read', 'path' => $directory];
     }
 
     /**
