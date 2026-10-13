@@ -21,6 +21,11 @@ use Psr\Log\LoggerInterface;
  * has to reimplement either: any \Throwable becomes an "unavailable" tab, and a
  * snapshot is reused for cache_ttl seconds so a held-down browser refresh
  * cannot turn the dashboard into a load generator against the stack it watches.
+ *
+ * Tabs whose inputs only change on deploy — Security and Compatibility read
+ * composer.lock, patch files and the vendor code they touch — carry a longer
+ * floor from di.xml. A cache_ttl of 0 still switches the snapshot off for
+ * every tab.
  */
 class CollectorRunner
 {
@@ -34,22 +39,28 @@ class CollectorRunner
 
     private LoggerInterface $logger;
 
+    /** @var array<string, int> Collector code => minimum snapshot lifetime in seconds. */
+    private array $minimumTtl;
+
     /**
      * @param Snapshot $cache
      * @param SerializerInterface $serializer
      * @param Config $config
      * @param LoggerInterface $logger
+     * @param array<string, int> $minimumTtl
      */
     public function __construct(
         Snapshot $cache,
         SerializerInterface $serializer,
         Config $config,
-        LoggerInterface $logger
+        LoggerInterface $logger,
+        array $minimumTtl = []
     ) {
         $this->cache = $cache;
         $this->serializer = $serializer;
         $this->config = $config;
         $this->logger = $logger;
+        $this->minimumTtl = array_map('intval', $minimumTtl);
     }
 
     /**
@@ -60,6 +71,9 @@ class CollectorRunner
     public function run(string $code, CollectorInterface $collector): array
     {
         $ttl = $this->config->getCacheTtl();
+        if ($ttl > 0) {
+            $ttl = max($ttl, $this->minimumTtl[$code] ?? 0);
+        }
         $cacheKey = self::CACHE_PREFIX . $code;
 
         if ($ttl > 0) {

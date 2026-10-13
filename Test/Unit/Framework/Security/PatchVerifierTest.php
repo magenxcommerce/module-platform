@@ -205,6 +205,72 @@ class PatchVerifierTest extends TestCase
         $this->assertSame(PatchVerifier::VERIFIED, $this->verifier($files)->verify('d/aug.diff')['state']);
     }
 
+    public function testAnAbsoluteOrClimbingPathIsNeverRead(): void
+    {
+        $patch = <<<'DIFF'
+            --- /etc/passwd
+            +++ /etc/passwd
+            @@ -1 +1 @@
+            -root:x:0:0
+            +root:x:0:1
+            --- a/../../etc/hosts
+            +++ b/../../etc/hosts
+            @@ -1 +1 @@
+            -a
+            +b
+            DIFF;
+        $read = [];
+        $project = $this->createMock(ProjectFiles::class);
+        $project->method('vendorPath')->willReturn('vendor');
+        $project->method('readText')->willReturnCallback(
+            static function (string $path) use ($patch, &$read): array {
+                $read[] = $path;
+
+                return ['data' => $path === 'p.patch' ? $patch : "root:x:0:0\n", 'state' => 'read', 'path' => $path];
+            }
+        );
+
+        $result = (new PatchVerifier($project))->verify('p.patch');
+
+        $this->assertSame(PatchVerifier::UNVERIFIABLE, $result['state']);
+        $this->assertSame(['p.patch'], $read);
+    }
+
+    public function testATargetOverTheSizeCapIsJudgedUnknown(): void
+    {
+        $project = $this->createMock(ProjectFiles::class);
+        $project->method('vendorPath')->willReturn('vendor');
+        $project->method('readText')->willReturnCallback(
+            static fn (string $path, int $maxBytes = 0): array => $path === 'a.patch'
+                ? ['data' => self::COMPOSER_PATCH, 'state' => 'read', 'path' => $path]
+                : ['data' => null, 'state' => $maxBytes <= 4194304 ? 'unreadable' : 'read', 'path' => $path]
+        );
+
+        $this->assertSame(PatchVerifier::UNVERIFIABLE, (new PatchVerifier($project))->verify('a.patch')['state']);
+    }
+
+    public function testEachPatchIsReadOnceEvenWhenItIsAlsoASibling(): void
+    {
+        $reads = [];
+        $files = [self::TARGET => self::PATCHED, 'd/a.diff' => self::COMPOSER_PATCH, 'd/b.diff' => self::COMPOSER_PATCH];
+        $project = $this->createMock(ProjectFiles::class);
+        $project->method('vendorPath')->willReturn('vendor');
+        $project->method('readText')->willReturnCallback(
+            static function (string $path) use ($files, &$reads): array {
+                $reads[$path] = ($reads[$path] ?? 0) + 1;
+
+                return ['data' => $files[$path] ?? null, 'state' => isset($files[$path]) ? 'read' : 'absent', 'path' => $path];
+            }
+        );
+        $verifier = new PatchVerifier($project);
+
+        $verifier->verify('d/a.diff', null, ['d/a.diff', 'd/b.diff']);
+        $verifier->verify('d/b.diff', null, ['d/a.diff', 'd/b.diff']);
+
+        $this->assertSame(1, $reads['d/a.diff'] ?? 0);
+        $this->assertSame(2, $reads['d/b.diff'] ?? 0);
+    }
+
     public function testAComposerPatchesRecordResolvesRelativeToItsPackage(): void
     {
         $relative = str_replace('vendor/magento/module-catalog-inventory/', '', self::COMPOSER_PATCH);
