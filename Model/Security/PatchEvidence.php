@@ -125,8 +125,9 @@ class PatchEvidence
             $listing = $this->files->listFiles($directory);
             $found = [];
             foreach ($listing['files'] as $path) {
-                if (in_array(strtolower(pathinfo($path, PATHINFO_EXTENSION)), self::PATCH_EXTENSIONS, true)) {
-                    $found[] = $this->entry($source, self::PRESENT, null, basename($path), $path);
+                if ($this->isPatchFile($path)) {
+                    $name = substr($path, (int) strrpos('/' . $path, '/'));
+                    $found[] = $this->entry($source, self::PRESENT, null, $name, $path);
                 }
             }
             $sources[] = [
@@ -208,7 +209,7 @@ class PatchEvidence
         if ($reference === ''
             || str_contains($reference, '://')
             || str_contains($reference, '..')
-            || !in_array(strtolower(pathinfo($reference, PATHINFO_EXTENSION)), self::PATCH_EXTENSIONS, true)
+            || !$this->isPatchFile($reference)
         ) {
             return $entry;
         }
@@ -220,6 +221,17 @@ class PatchEvidence
         }
 
         return $entry;
+    }
+
+    /**
+     * @param string $path
+     * @return bool
+     */
+    private function isPatchFile(string $path): bool
+    {
+        $dot = strrpos($path, '.');
+
+        return $dot !== false && in_array(strtolower(substr($path, $dot + 1)), self::PATCH_EXTENSIONS, true);
     }
 
     /**
