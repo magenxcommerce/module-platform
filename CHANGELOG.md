@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.1](https://github.com/magenxcommerce/module-platform/compare/v1.4.0...v1.4.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* security patches version detection ([#37](https://github.com/magenxcommerce/module-platform/issues/37)) ([703d8f3](https://github.com/magenxcommerce/module-platform/commit/703d8f33161f8003902fe634b865ab2086b3a715))
+* Verify patch application by checking code instead of records ([#35](https://github.com/magenxcommerce/module-platform/issues/35)) ([4ea8284](https://github.com/magenxcommerce/module-platform/commit/4ea828458b154e09e15262f58386e76e952856c2))
+
 ## [1.4.0](https://github.com/magenxcommerce/module-platform/compare/v1.3.4...v1.4.0) (2026-10-13)
 
 
