@@ -88,6 +88,15 @@
                     <depends><field id="enabled">1</field></depends>
                 </field>
             </group>
+            <group id="advisories" translate="label" type="text" sortOrder="40" showInDefault="1">
+                <label>Security &amp; Compatibility</label>
+                <field id="enabled" translate="label comment" type="select" sortOrder="10" showInDefault="1" canRestore="1">
+                    <label>Look Up Public Advisories</label>
+                    <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
+                    <comment>Lets the Security and Compatibility tabs ask magento.watch about this release, Packagist about the locked packages, and the Mage-OS mirror for the composer manifest of the release an upgrade would install. Only the release string and package names are sent, over https, and answers are kept for an hour. When No, both tabs report what this installation records and nothing else.</comment>
+                    <depends><field id="enabled">1</field></depends>
+                </field>
+            </group>
         </section>
     </system>
 </config>

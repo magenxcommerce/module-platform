@@ -13,8 +13,15 @@ left-hand side in the admin's own `admin__page-nav` strip — the same one syste
 configuration uses — and shows one panel per backend, each with the handful of numbers
 that predict trouble, read live from the running service.
 
+Two more tabs look at the installation rather than a backend: **Security** — the Adobe
+bulletins open against this release, whether the isolated patches that close them are
+recorded as applied, and known advisories against `composer.lock` — and **Compatibility**
+— whether the services and extensions this store runs fit the release it would upgrade to.
+
 It is read-only. It writes nothing, changes nothing, runs no cron, and touches no
 storefront request path. Opening the page is the only thing that makes it do any work.
+Those two tabs are also the only part that reaches outside the private network; see
+[Security and Compatibility](#security-and-compatibility) for exactly what they send.
 
 ## What it does not ask you to configure
 
@@ -38,6 +45,8 @@ log line.
 | **PHP / FPM** | `opcache_get_status()` and friends in-process, plus the php-fpm status page | Every block OPcache publishes — memory and free memory, wasted memory against the percentage it restarts at, the `cache_full` flag, the interned string buffer, cached scripts and cached keys, hit rate with the counters behind it, blacklist misses, the three restart causes counted separately, a restart in flight, when the cache started and last emptied, JIT and its buffer, and preloading — missing required extensions and missing recommended ones (`redis`, `igbinary`), every field the FPM status page publishes — pool, process manager, start time and uptime, accepted connections with their average rate, the listen queue live and at its high-water mark against the socket backlog, idle/active/total and peak-active processes, `max children reached`, slow requests and memory peak — plus the hardening reads: the user FPM runs as, every path it can write measured against the `tmp/` + `var/` + `pub/media/` allowlist, which of `auth.json`, `.git`, `.github`, `deploy*` and the PHP user's home dotfiles it can read, whether process-spawning functions are disabled, and whether cron is reachable — plus host load and disk |
 | **Nginx** | `stub_status` | Active connections, dropped connections, requests per connection, worker read/write/wait state. The endpoint URL rides in the tab's summary line rather than a card of its own |
 | **imgproxy** | Prometheus `/metrics` | Error rate and errors split by type, 5xx share of requests, worker utilization, the queue/downloading/processing spans — which separate a saturated imgproxy from a slow origin from an expensive image — and libvips memory against its peak |
+| **Security** | magento.watch, Packagist's advisory API, and composer files read from disk | The release's support window; each open Adobe bulletin with its isolated patch coloured by evidence — applied, declared, hotfix file present, or no record — and the order they go on in; which patch-record sources could be read; locked packages with a known advisory |
+| **Compatibility** | magento.watch, the Mage-OS mirror, Packagist metadata, `composer.lock`, and the version rows of the other tabs | For the installed release and each upgrade candidate: PHP against the release's composer constraint and its tested versions, the database, search, Redis and RabbitMQ against their tested versions, and every third-party package whose requirements exclude what the release pins; then direct dependencies with a newer stable release |
 | **FrankenPHP** | Caddy `metrics` handler | Regular-thread utilization with worker threads taken out, the request queue waiting for a free PHP thread, per-worker ready/busy/queue/crashes, OPcache restarts by reason (PHP 8.4+), and — with Caddy's `metrics` global option — requests in flight, average request time and 5xx share |
 
 The two statement-digest sections answer the questions a slow database actually raises —
@@ -63,6 +72,51 @@ Thresholds are class constants in each collector rather than admin fields, so th
 nothing to tune and nothing to get wrong; grep for `_WARN_` and `_ERROR_` in
 `Model/Collector/` to see every one of them.
 
+## Security and Compatibility
+
+Module versions (`104.0.8-p5`) only imply the release, and Adobe's isolated security
+patches change files without changing any package version — so nothing else in the admin
+can tell a patched 2.4.8-p5 from an unpatched one. These two tabs answer from three kinds of
+source, every one read without executing anything: `composer audit` and `magento-patches
+status` need process execution, which a hardened store disables for the PHP user, and
+should.
+
+**From disk**, through Magento's filesystem: `composer.json` and `composer.lock`,
+`vendor/composer/installed.json` (composer-patches 1.x writes `extra.patches_applied`
+there), `patches.lock.json` (composer-patches 2.x), the file `extra.patches-file` names, and
+`m2-hotfixes/*.patch`. A patch record matches a bulletin when it names the isolated patch
+(`VULN-39341`, `2026-jul`) or the bulletin (`APSB26-146`). Each source is reported as
+`read`, `absent` or `unreadable`; the last is a hardened store keeping the PHP user out,
+which must not read as "no patches". A patch applied by hand with `patch -p1` leaves no
+record, so its absence is "No record found", never "missing".
+
+**From public services**, over https only, cached for an hour in this module's cache type:
+
+| Service | Asked for | What is sent |
+|---|---|---|
+| [magento.watch](https://magento.watch/api) | Open bulletins and isolated patches for this release; system requirements of each supported release | The release string |
+| Packagist `/api/security-advisories/` | Advisories for the locked packages — the database `composer audit` reads | Locked package names, in batches of 40 |
+| Mage-OS mirror `/p2/magento/product-community-edition.json` | The release metapackage's `require`: its PHP constraint and the version it pins every magento/* module and library to | Nothing beyond the request |
+| Packagist `/p2/<package>.json` | The newest stable release of each direct dependency (magento/* from the mirror instead) | One package name per request |
+
+A host that does not answer at all is skipped for the rest of the page load, so a
+firewalled Packagist costs one timeout rather than forty. With the lookups switched off —
+`magenx_platform/advisories/enabled` — both tabs still report the installed release, the
+patch records and the measured versions.
+
+**How the Compatibility tab decides.** PHP is a blocker only when the release's own
+metapackage constraint excludes it, because composer will not install the release at all.
+Adobe's lists of tested PHP, database, search, cache and queue versions are lists rather
+than ranges, so anything outside them is a warning — 2.4.9 lists PHP 8.5 alone but its
+metapackage allows 8.3 to 8.5. A third-party package in `composer.lock` whose `require`
+excludes what the release pins (`magento/framework 102.0.*` against 103.0.9, `guzzlehttp/guzzle
+^6.5` against ^7.5) is a blocker, because composer would refuse the upgrade until it is
+updated or removed. Magento's own packages, and libraries the release itself requires, move
+with the release and are not checked.
+
+The same two reports are served to AI agents by `magenxcommerce/module-ai-mcp` as the
+`security_status` and `upgrade_compatibility` tools.
+
 ## Configuration
 
 `Stores > Configuration > Magenx > Platform Overview` — all default scope, since the stack
@@ -80,6 +134,11 @@ is one deployment.
 | `magenx_platform/endpoints/rabbitmq_management_url` | *(empty)* | Empty derives `http://<amqp host>:15672` from `env.php` |
 | `magenx_platform/endpoints/imgproxy_metrics_url` | `http://imgproxy:4594/metrics` | The imgproxy Prometheus endpoint. Needs `IMGPROXY_PROMETHEUS_BIND` set, on its own port |
 | `magenx_platform/endpoints/frankenphp_metrics_url` | `http://frankenphp:2020/metrics` | A Caddy site block running only the `metrics` handler. Not the admin API |
+| `magenx_platform/advisories/enabled` | `1` | Let the Security and Compatibility tabs ask the public services above |
+| `magenx_platform/advisories/release_api_url` | `https://magento.watch/api/v1` | Release, bulletin and requirement data. No admin field: set with `config:set` or `env.php` |
+| `magenx_platform/advisories/packagist_url` | `https://packagist.org` | Advisory database. No admin field |
+| `magenx_platform/advisories/packagist_repo_url` | `https://repo.packagist.org` | Package metadata. No admin field |
+| `magenx_platform/advisories/magento_repo_url` | `https://mirror.mage-os.org` | A credential-free composer repository carrying magento/* packages. No admin field |
 
 Only these backends need an address. Nginx, PHP-FPM, imgproxy and FrankenPHP publish their
 stats over HTTP rather than through a client library, and RabbitMQ reports nothing over AMQP
@@ -347,6 +406,15 @@ silently reverting.
   that ACL resource accordingly — it is the boundary, not the endpoint list.
 
 ## Caveats
+
+- The Security and Compatibility tabs take seconds on a cold cache: the Mage-OS manifest
+  of every release is 1.4 MB, and the outdated check is one request per direct dependency.
+  Every answer is then kept for an hour.
+- Only the Magento Open Source metapackage is public, so for Adobe Commerce the
+  Compatibility tab checks extensions against the modules both editions share. Mage-OS
+  release manifests are not checked yet.
+- A store already running these tabs with a saved **Show Tabs** selection does not gain
+  them on upgrade; tick them in configuration. New installations get both.
 
 - The dashboard is live-only. There is no history and no sparklines — trends are Grafana's
   job, and `deploy/observability/` already runs it.

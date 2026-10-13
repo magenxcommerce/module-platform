@@ -43,9 +43,10 @@ class StatusFetcher
      * @param string $url
      * @param string|null $user
      * @param string|null $password
+     * @param int|null $timeout Seconds; the configured backend timeout when null.
      * @return string|null
      */
-    public function fetch(string $url, ?string $user = null, ?string $password = null): ?string
+    public function fetch(string $url, ?string $user = null, ?string $password = null, ?int $timeout = null): ?string
     {
         $this->lastError = '';
 
@@ -59,7 +60,7 @@ class StatusFetcher
             return null;
         }
 
-        $timeout = $this->config->getTimeout();
+        $timeout = $timeout ?? $this->config->getTimeout();
 
         try {
             $curl = $this->curlFactory->create();

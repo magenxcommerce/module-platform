@@ -28,6 +28,11 @@ class Config
     public const XML_PATH_RABBITMQ_MANAGEMENT_URL = 'magenx_platform/endpoints/rabbitmq_management_url';
     public const XML_PATH_IMGPROXY_METRICS_URL = 'magenx_platform/endpoints/imgproxy_metrics_url';
     public const XML_PATH_FRANKENPHP_METRICS_URL = 'magenx_platform/endpoints/frankenphp_metrics_url';
+    public const XML_PATH_ADVISORIES_ENABLED = 'magenx_platform/advisories/enabled';
+    public const XML_PATH_ADVISORIES_RELEASE_API_URL = 'magenx_platform/advisories/release_api_url';
+    public const XML_PATH_ADVISORIES_PACKAGIST_URL = 'magenx_platform/advisories/packagist_url';
+    public const XML_PATH_ADVISORIES_PACKAGIST_REPO_URL = 'magenx_platform/advisories/packagist_repo_url';
+    public const XML_PATH_ADVISORIES_MAGENTO_REPO_URL = 'magenx_platform/advisories/magento_repo_url';
 
     /**
      * A probe that outlives this is reported as unavailable rather than allowed
@@ -141,5 +146,64 @@ class Config
     public function getFrankenPhpMetricsUrl(): string
     {
         return trim((string) $this->scopeConfig->getValue(self::XML_PATH_FRANKENPHP_METRICS_URL));
+    }
+
+    /**
+     * Whether the Security and Compatibility tabs may ask public services about
+     * this store's release and locked packages. Off, they report only what
+     * the installation itself records.
+     *
+     * @return bool
+     */
+    public function isAdvisoryLookupEnabled(): bool
+    {
+        return $this->scopeConfig->isSetFlag(self::XML_PATH_ADVISORIES_ENABLED);
+    }
+
+    /**
+     * The magento.watch version API: releases, open bulletins and system
+     * requirements.
+     *
+     * The four advisory URLs have no admin field on purpose. They are
+     * addresses the server fetches from, and belong in config.xml, env.php or
+     * `config:set` rather than in a form any configuration editor can point at
+     * an internal host.
+     *
+     * @return string
+     */
+    public function getReleaseApiUrl(): string
+    {
+        return trim((string) $this->scopeConfig->getValue(self::XML_PATH_ADVISORIES_RELEASE_API_URL));
+    }
+
+    /**
+     * Packagist's API host, which serves the security advisory database.
+     *
+     * @return string
+     */
+    public function getPackagistUrl(): string
+    {
+        return trim((string) $this->scopeConfig->getValue(self::XML_PATH_ADVISORIES_PACKAGIST_URL));
+    }
+
+    /**
+     * Packagist's composer repository, which serves package metadata.
+     *
+     * @return string
+     */
+    public function getPackagistRepoUrl(): string
+    {
+        return trim((string) $this->scopeConfig->getValue(self::XML_PATH_ADVISORIES_PACKAGIST_REPO_URL));
+    }
+
+    /**
+     * A composer repository carrying magento/* packages without credentials —
+     * the Mage-OS mirror of repo.magento.com by default.
+     *
+     * @return string
+     */
+    public function getMagentoRepoUrl(): string
+    {
+        return trim((string) $this->scopeConfig->getValue(self::XML_PATH_ADVISORIES_MAGENTO_REPO_URL));
     }
 }
