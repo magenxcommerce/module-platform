@@ -33,6 +33,7 @@ class Config
     public const XML_PATH_ADVISORIES_PACKAGIST_URL = 'magenx_platform/advisories/packagist_url';
     public const XML_PATH_ADVISORIES_PACKAGIST_REPO_URL = 'magenx_platform/advisories/packagist_repo_url';
     public const XML_PATH_ADVISORIES_MAGENTO_REPO_URL = 'magenx_platform/advisories/magento_repo_url';
+    public const XML_PATH_ADVISORIES_PATCH_DIRS = 'magenx_platform/advisories/patch_dirs';
 
     /**
      * A probe that outlives this is reported as unavailable rather than allowed
@@ -205,5 +206,27 @@ class Config
     public function getMagentoRepoUrl(): string
     {
         return trim((string) $this->scopeConfig->getValue(self::XML_PATH_ADVISORIES_MAGENTO_REPO_URL));
+    }
+
+    /**
+     * Directories under the Magento root where patch files are kept, each
+     * checked against the code it changes.
+     *
+     * Only plain relative paths are accepted: the Security tab reads these
+     * files, and nothing an admin types should walk it out of the root.
+     *
+     * @return string[]
+     */
+    public function getPatchDirs(): array
+    {
+        $dirs = [];
+        foreach (explode(',', (string) $this->scopeConfig->getValue(self::XML_PATH_ADVISORIES_PATCH_DIRS)) as $dir) {
+            $dir = trim(trim($dir), '/');
+            if (preg_match('#^[A-Za-z0-9_.\-/]+$#', $dir) === 1 && !str_contains($dir, '..')) {
+                $dirs[] = $dir;
+            }
+        }
+
+        return array_values(array_unique($dirs));
     }
 }

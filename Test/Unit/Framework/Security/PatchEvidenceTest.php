@@ -8,17 +8,20 @@ declare(strict_types=1);
 
 namespace Magenx\Platform\Test\Unit\Framework\Security;
 
+use Magenx\Platform\Model\Config;
 use Magenx\Platform\Model\Security\PatchEvidence;
+use Magenx\Platform\Model\Security\PatchVerifier;
 use Magenx\Platform\Model\Security\ProjectFiles;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
 /**
  * Applied (composer-patches recorded it), declared (composer.json asks for it),
- * present (a file in m2-hotfixes/) or nothing found — and nothing found is
- * never "missing".
+ * present (a file in a patch directory) or nothing found — and nothing found is
+ * never "missing". Where the patch file is on disk, the code outranks them all.
  */
 #[CoversClass(PatchEvidence::class)]
+#[CoversClass(PatchVerifier::class)]
 class PatchEvidenceTest extends TestCase
 {
     public function testComposerPatchesOneRecordsCountAsApplied(): void
@@ -79,16 +82,59 @@ class PatchEvidenceTest extends TestCase
 
         $this->assertSame(PatchEvidence::NO_EVIDENCE, $evidence->match(['VULN-39341'])['status']);
         $this->assertSame(
-            ['composer_patches_v1', 'composer_patches_v2', 'composer_json', 'm2_hotfixes'],
+            ['composer_patches_v1', 'composer_patches_v2', 'composer_json', 'patch_dir', 'm2_hotfixes'],
             array_column($evidence->collect()['sources'], 'source')
         );
     }
 
+    public function testAPatchAppliedByHandIsVerifiedInTheCode(): void
+    {
+        $evidence = $this->evidence([], ['patches/APSB26-146_VULN-39341_2.4.8-p5.patch'], [
+            'patches/APSB26-146_VULN-39341_2.4.8-p5.patch' => self::PATCH,
+            'vendor/magento/framework/Escaper.php' => "<?php\nreturn htmlspecialchars(\$v);\n",
+        ]);
+
+        $match = $evidence->match(['VULN-39341', 'APSB26-146']);
+
+        $this->assertSame(PatchEvidence::VERIFIED, $match['status']);
+        $this->assertSame('patch_dir', $match['matches'][0]['source']);
+        $this->assertSame(PatchEvidence::PRESENT, $match['matches'][0]['record_status']);
+    }
+
+    public function testTheCodeOverridesARecordThatSaysApplied(): void
+    {
+        $evidence = $this->evidence(
+            ['patches.lock.json' => ['patches' => [
+                'magento/framework' => [['description' => 'VULN-39341', 'url' => 'patches/vuln.patch']],
+            ]]],
+            [],
+            [
+                'patches/vuln.patch' => self::PATCH,
+                'vendor/magento/framework/Escaper.php' => "<?php\nreturn \$v;\n",
+            ]
+        );
+
+        $match = $evidence->match(['VULN-39341']);
+
+        $this->assertSame(PatchEvidence::NOT_IN_CODE, $match['status']);
+        $this->assertSame(PatchVerifier::NOT_APPLIED, $match['matches'][0]['code']['state']);
+    }
+
+    private const PATCH = <<<'DIFF'
+        --- a/vendor/magento/framework/Escaper.php
+        +++ b/vendor/magento/framework/Escaper.php
+        @@ -1,2 +1,2 @@
+         <?php
+        -return $v;
+        +return htmlspecialchars($v);
+        DIFF;
+
     /**
      * @param array<string, array<mixed>> $json Path => decoded contents; anything else is absent.
-     * @param string[] $hotfixes
+     * @param string[] $patchFiles Files in m2-hotfixes/ or patches/.
+     * @param array<string, string> $text Path => contents of patch and code files.
      */
-    private function evidence(array $json, array $hotfixes = []): PatchEvidence
+    private function evidence(array $json, array $patchFiles = [], array $text = []): PatchEvidence
     {
         $files = $this->createMock(ProjectFiles::class);
         $files->method('readJson')->willReturnCallback(
@@ -101,12 +147,28 @@ class PatchEvidenceTest extends TestCase
         $files->method('installedJson')->willReturnCallback(
             static fn (): array => $files->readJson('vendor/composer/installed.json')
         );
-        $files->method('listDirectory')->willReturn([
-            'files' => $hotfixes,
-            'state' => $hotfixes === [] ? 'absent' : 'read',
-            'path' => 'm2-hotfixes',
-        ]);
+        $files->method('listFiles')->willReturnCallback(
+            static function (string $directory) use ($patchFiles): array {
+                $found = array_values(array_filter(
+                    $patchFiles,
+                    static fn (string $path): bool => str_starts_with($path, $directory . '/')
+                ));
 
-        return new PatchEvidence($files);
+                return ['files' => $found, 'state' => $found === [] ? 'absent' : 'read', 'path' => $directory];
+            }
+        );
+        $files->method('readText')->willReturnCallback(
+            static fn (string $path): array => [
+                'data' => $text[$path] ?? null,
+                'state' => isset($text[$path]) ? 'read' : 'absent',
+                'path' => $path,
+            ]
+        );
+        $files->method('vendorPath')->willReturn('vendor');
+
+        $config = $this->createMock(Config::class);
+        $config->method('getPatchDirs')->willReturn(['patches', 'm2-hotfixes']);
+
+        return new PatchEvidence($files, new PatchVerifier($files), $config);
     }
 }

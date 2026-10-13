@@ -87,6 +87,46 @@ class ReportsTest extends TestCase
         $this->assertSame([], $report['apply_order']);
     }
 
+    public function testPatchesVerifiedInTheCodeCloseEveryBulletin(): void
+    {
+        $this->watch->method('getVersion')->willReturn($this->wrap($this->p5()));
+
+        $report = $this->security(PatchEvidence::VERIFIED)->build();
+
+        $this->assertSame('patched_verified', $report['status']);
+        $this->assertSame([], $report['apply_order']);
+        $this->assertStringContainsString('verified in the code', $report['summary']);
+    }
+
+    public function testCodeThatContradictsARecordKeepsTheBulletinOpen(): void
+    {
+        $this->watch->method('getVersion')->willReturn($this->wrap($this->p5()));
+
+        $report = $this->security(PatchEvidence::NOT_IN_CODE)->build();
+
+        $this->assertSame('vulnerable', $report['status']);
+        $this->assertSame('not_in_code', $report['open_bulletins'][0]['local_status']);
+        $this->assertCount(4, $report['apply_order']);
+    }
+
+    public function testAPatchNotPublishedForThisReleaseNeedsAnUpgradeFirst(): void
+    {
+        $data = $this->p5();
+        $data['security']['vulnerableTo'][0]['isolatedPatches'][0]['appliesTo'] = ['2.4.9', '2.4.8-p6', '2.4.7-p10'];
+        $this->watch->method('getVersion')->willReturn($this->wrap($data));
+
+        $report = $this->security(PatchEvidence::NO_EVIDENCE)->build();
+        $bulletin = $report['open_bulletins'][0];
+
+        $this->assertSame('upgrade_required', $bulletin['local_status']);
+        $this->assertSame('2.4.8-p6', $bulletin['upgrade_to']);
+        $this->assertFalse($bulletin['isolated_patches'][0]['applies_to_installed']);
+        $this->assertNotContains('2026-sep', $report['apply_order']);
+
+        $verified = $this->security(PatchEvidence::VERIFIED)->build()['open_bulletins'][0];
+        $this->assertSame('verified_in_code', $verified['local_status']);
+    }
+
     public function testAnUnavailableLookupStillReportsTheReleaseAndPackages(): void
     {
         $this->watch->method('getVersion')->willReturn(null);

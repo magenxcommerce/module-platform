@@ -8,6 +8,8 @@ declare(strict_types=1);
 
 namespace Magenx\Platform\Model\Security;
 
+use Magenx\Platform\Model\Config;
+
 /**
  * What this installation records about the patches applied to it.
  *
@@ -22,38 +24,69 @@ namespace Magenx\Platform\Model\Security;
  *   file and applies exactly that set on install. Applied.
  * - `composer.json` `extra.patches` and the file `extra.patches-file` names.
  *   Declared: applied on the next install, which may or may not have run.
- * - `m2-hotfixes/*.patch` — the directory Adobe Commerce Cloud applies on every
- *   build, and a common convention elsewhere. Present.
+ * - `*.patch` / `*.diff` in the configured patch directories (`patches/` and
+ *   `m2-hotfixes/` by default — the latter is what Adobe Commerce Cloud applies
+ *   on every build). Present.
  *
- * A patch applied by hand with `patch -p1` leaves none of these, which is why
- * the absence of evidence is reported as exactly that and never as "missing".
+ * None of those says what the code holds now. So every patch file that can be
+ * read — in a patch directory, or a local file a composer-patches record names
+ * — is also checked hunk by hunk against the files it changes
+ * ({@see PatchVerifier}), and that answer outranks the record: `verified` when
+ * every hunk is in the code, `partial`, or `not_in_code` when the code is still
+ * unpatched whatever a record claims. That is what credits a patch applied by
+ * hand with `patch -p1`, which leaves no record at all.
+ *
+ * A patch with no file left on disk and no record is reported as exactly that,
+ * never as "missing".
  */
 class PatchEvidence
 {
+    public const VERIFIED = 'verified';
     public const APPLIED = 'applied';
     public const DECLARED = 'declared';
     public const PRESENT = 'present';
+    public const PARTIAL = 'partial';
+    public const NOT_IN_CODE = 'not_in_code';
     public const NO_EVIDENCE = 'no_evidence';
 
     private const HOTFIX_DIR = 'm2-hotfixes';
 
+    private const PATCH_EXTENSIONS = ['patch', 'diff'];
+
+    /** What the code says about a patch file, as the evidence it amounts to. */
+    private const CODE_EVIDENCE = [
+        PatchVerifier::VERIFIED => self::VERIFIED,
+        PatchVerifier::PARTIAL => self::PARTIAL,
+        PatchVerifier::NOT_APPLIED => self::NOT_IN_CODE,
+    ];
+
     private ProjectFiles $files;
+
+    private PatchVerifier $verifier;
+
+    private Config $config;
 
     /** @var array{sources: array<int, array<string, mixed>>, entries: array<int, array<string, mixed>>}|null */
     private ?array $collected = null;
 
     /**
      * @param ProjectFiles $files
+     * @param PatchVerifier $verifier
+     * @param Config $config
      */
-    public function __construct(ProjectFiles $files)
+    public function __construct(ProjectFiles $files, PatchVerifier $verifier, Config $config)
     {
         $this->files = $files;
+        $this->verifier = $verifier;
+        $this->config = $config;
     }
 
     /**
      * Every patch record found, and what was looked at to find them.
      *
-     * Each entry is `{source, status, package, description, reference}`;
+     * Each entry is `{source, status, package, description, reference, code}`,
+     * `code` being the {@see PatchVerifier} result when the entry names a patch
+     * file that could be read, and null otherwise;
      * each source is `{source, path, state, entries}`, where `state` is
      * `read`, `absent` or `unreadable` — the last being a hardened store
      * keeping the PHP user out, which is worth knowing rather than reading as
@@ -87,27 +120,38 @@ class PatchEvidence
             $this->add($sources, $entries, 'composer_patches_file', $declared, [$this, 'fromPatchesFile']);
         }
 
-        $hotfixes = $this->files->listDirectory(self::HOTFIX_DIR);
-        $found = [];
-        foreach ($hotfixes['files'] as $path) {
-            if (str_ends_with(strtolower($path), '.patch')) {
-                $name = substr($path, (int) strrpos('/' . $path, '/'));
-                $found[] = $this->entry('m2_hotfixes', self::PRESENT, null, $name, $path);
+        foreach ($this->config->getPatchDirs() as $directory) {
+            $source = $directory === self::HOTFIX_DIR ? 'm2_hotfixes' : 'patch_dir';
+            $listing = $this->files->listFiles($directory);
+            $found = [];
+            foreach ($listing['files'] as $path) {
+                if ($this->isPatchFile($path)) {
+                    $name = substr($path, (int) strrpos('/' . $path, '/'));
+                    $found[] = $this->entry($source, self::PRESENT, null, $name, $path);
+                }
             }
+            $sources[] = [
+                'source' => $source,
+                'path' => $listing['path'],
+                'state' => $listing['state'],
+                'entries' => count($found),
+            ];
+            array_push($entries, ...$found);
         }
-        $sources[] = [
-            'source' => 'm2_hotfixes',
-            'path' => $hotfixes['path'],
-            'state' => $hotfixes['state'],
-            'entries' => count($found),
-        ];
-        array_push($entries, ...$found);
+
+        foreach ($entries as $index => $entry) {
+            $entries[$index] = $this->checkCode($entry);
+        }
 
         return $this->collected = ['sources' => $sources, 'entries' => $entries];
     }
 
     /**
      * The strongest evidence that any of the given ids was applied.
+     *
+     * Where the code could be checked, the code decides: `verified` if any
+     * matching patch file is wholly in it, else `partial`, else `not_in_code`.
+     * Records only decide when no matching patch file could be judged.
      *
      * An id matches an entry when it appears, case-insensitively, in the
      * entry's description or reference — Adobe names both the patch files and
@@ -137,7 +181,9 @@ class PatchEvidence
         }
 
         $status = self::NO_EVIDENCE;
-        foreach ([self::APPLIED, self::DECLARED, self::PRESENT] as $candidate) {
+        foreach ([self::VERIFIED, self::PARTIAL, self::NOT_IN_CODE, self::APPLIED, self::DECLARED, self::PRESENT]
+            as $candidate
+        ) {
             foreach ($matches as $entry) {
                 if ($entry['status'] === $candidate) {
                     $status = $candidate;
@@ -147,6 +193,45 @@ class PatchEvidence
         }
 
         return ['status' => $status, 'matches' => $matches];
+    }
+
+    /**
+     * Check the patch file an entry names against the code, when there is one
+     * on disk to read. A URL is left alone: fetching patches is not this
+     * module's business.
+     *
+     * @param array<string, mixed> $entry
+     * @return array<string, mixed>
+     */
+    private function checkCode(array $entry): array
+    {
+        $reference = ltrim($entry['reference'], './');
+        if ($reference === ''
+            || str_contains($reference, '://')
+            || str_contains($reference, '..')
+            || !$this->isPatchFile($reference)
+        ) {
+            return $entry;
+        }
+
+        $entry['code'] = $this->verifier->verify($reference, $entry['package']);
+        if (isset(self::CODE_EVIDENCE[$entry['code']['state']])) {
+            $entry['record_status'] = $entry['status'];
+            $entry['status'] = self::CODE_EVIDENCE[$entry['code']['state']];
+        }
+
+        return $entry;
+    }
+
+    /**
+     * @param string $path
+     * @return bool
+     */
+    private function isPatchFile(string $path): bool
+    {
+        $dot = strrpos($path, '.');
+
+        return $dot !== false && in_array(strtolower(substr($path, $dot + 1)), self::PATCH_EXTENSIONS, true);
     }
 
     /**
@@ -296,6 +381,7 @@ class PatchEvidence
             'package' => $package,
             'description' => is_scalar($description) ? (string) $description : '',
             'reference' => is_scalar($reference) ? (string) $reference : '',
+            'code' => null,
         ];
     }
 }

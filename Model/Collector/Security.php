@@ -12,12 +12,13 @@ use Magenx\Platform\Model\Metric\Result;
 use Magenx\Platform\Model\Metric\ResultFactory;
 use Magenx\Platform\Model\Metric\Status;
 use Magenx\Platform\Model\Security\PatchEvidence;
+use Magenx\Platform\Model\Security\PatchVerifier;
 use Magenx\Platform\Model\Security\SecurityReport;
 
 /**
  * The Security tab: Adobe bulletins open against this release, what this store
- * records about the isolated patches that close them, and known advisories
- * against the locked composer packages.
+ * records about the isolated patches that close them and whether their changes
+ * are in the code, and known advisories against the locked composer packages.
  *
  * Every finding comes from {@see SecurityReport}; this class only lays it out.
  * The MCP server's `security_status` tool returns the same report unrendered.
@@ -28,10 +29,20 @@ class Security implements CollectorInterface
     private const MAX_PACKAGE_ROWS = 50;
 
     private const EVIDENCE = [
+        PatchEvidence::VERIFIED => ['Verified in code', Status::OK],
         PatchEvidence::APPLIED => ['Applied', Status::OK],
         PatchEvidence::DECLARED => ['Declared, not verified', Status::WARN],
         PatchEvidence::PRESENT => ['Hotfix file present', Status::WARN],
         PatchEvidence::NO_EVIDENCE => ['No record found', Status::ERROR],
+        PatchEvidence::PARTIAL => ['Partially in code', Status::ERROR],
+        PatchEvidence::NOT_IN_CODE => ['Not in code', Status::ERROR],
+    ];
+
+    private const CODE_STATE = [
+        PatchVerifier::VERIFIED => ['Verified in code', Status::OK],
+        PatchVerifier::PARTIAL => ['Partially in code', Status::ERROR],
+        PatchVerifier::NOT_APPLIED => ['Not in code', Status::ERROR],
+        PatchVerifier::UNVERIFIABLE => ['Could not check', Status::WARN],
     ];
 
     private SecurityReport $report;
@@ -82,6 +93,7 @@ class Security implements CollectorInterface
             );
         }
         $this->addPatchRecords($result, $report['patch_records']['sources']);
+        $this->addCheckedFiles($result, $report['patch_records']['checked'] ?? []);
         $this->addPackages($result, $report['package_advisories']);
 
         return $result;
@@ -172,13 +184,17 @@ class Security implements CollectorInterface
         foreach ($bulletin['isolated_patches'] as $patch) {
             [$label, $status] = self::EVIDENCE[$patch['evidence']] ?? self::EVIDENCE[PatchEvidence::NO_EVIDENCE];
             $sources = array_unique(array_column($patch['matched_records'], 'source'));
-            $result->add(
-                $section,
-                (string) $patch['id'],
-                $sources === [] ? $label : sprintf('%s (%s)', $label, implode(', ', $sources)),
-                $status,
-                trim($cves . ' ' . ($patch['url'] ?? ''))
-            );
+            $value = $sources === [] ? $label : sprintf('%s (%s)', $label, implode(', ', $sources));
+            $hint = trim($cves . ' ' . ($patch['url'] ?? ''));
+            if (!($patch['applies_to_installed'] ?? true) && $patch['evidence'] !== PatchEvidence::VERIFIED) {
+                $value = sprintf(
+                    'Not published for this release — upgrade to %s first',
+                    $patch['requires_release'] ?? $bulletin['upgrade_to'] ?? 'a supported release'
+                );
+                $status = Status::ERROR;
+                $hint = 'Adobe lists this isolated patch only for releases this store is not on. ' . $hint;
+            }
+            $result->add($section, (string) $patch['id'], $value, $status, $hint);
         }
     }
 
@@ -198,6 +214,36 @@ class Security implements CollectorInterface
                 $unreadable ? Status::WARN : Status::INFO,
                 $unreadable
                     ? 'The PHP user cannot read this, so patches recorded here are invisible to this tab.'
+                    : ''
+            );
+        }
+    }
+
+    /**
+     * One row per patch file whose hunks were looked for in the code.
+     *
+     * @param Result $result
+     * @param array<int, array<string, mixed>> $checked
+     * @return void
+     */
+    private function addCheckedFiles(Result $result, array $checked): void
+    {
+        foreach ($checked as $file) {
+            [$label, $status] = self::CODE_STATE[$file['state']] ?? self::CODE_STATE[PatchVerifier::UNVERIFIABLE];
+            $value = $file['state'] === PatchVerifier::UNVERIFIABLE
+                ? sprintf('%s: %s', $label, $file['reason'] ?? 'unknown')
+                : sprintf('%s (%d/%d hunks)', $label, $file['applied'], $file['hunks']);
+            $result->add(
+                'Patch Files in Code',
+                (string) $file['path'],
+                $value,
+                $status,
+                $file['state'] === PatchVerifier::PARTIAL || $file['state'] === PatchVerifier::NOT_APPLIED
+                    ? sprintf(
+                        '%d of %d hunk(s) not found patched in the code.',
+                        $file['hunks'] - $file['applied'],
+                        $file['hunks']
+                    )
                     : ''
             );
         }
@@ -258,7 +304,7 @@ class Security implements CollectorInterface
     private function statusFor(string $status): string
     {
         return match ($status) {
-            'secure', 'patched_per_local_records' => Status::OK,
+            'secure', 'patched_verified', 'patched_per_local_records' => Status::OK,
             'possibly_patched' => Status::WARN,
             default => Status::ERROR,
         };

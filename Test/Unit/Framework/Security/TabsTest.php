@@ -43,6 +43,9 @@ class TabsTest extends TestCase
             'patch_records' => ['sources' => [
                 ['source' => 'composer_json', 'path' => 'composer.json', 'state' => 'read', 'entries' => 1],
                 ['source' => 'composer_patches_v2', 'path' => 'patches.lock.json', 'state' => 'unreadable', 'entries' => 0],
+            ], 'checked' => [
+                ['path' => 'patches/sep.patch', 'state' => 'verified', 'hunks' => 3, 'applied' => 3, 'not_applied' => 0],
+                ['path' => 'patches/aug.patch', 'state' => 'partial', 'hunks' => 4, 'applied' => 1, 'not_applied' => 3],
             ]],
             'package_advisories' => ['available' => true, 'checked' => 2, 'vulnerable' => [[
                 'package' => 'guzzlehttp/guzzle',
@@ -61,6 +64,8 @@ class TabsTest extends TestCase
         $this->assertSame([Status::WARN, 'unreadable'], $rows['patches.lock.json']);
         $this->assertSame([Status::ERROR, 'CVE-2026-69246'], $rows['guzzlehttp/guzzle 7.9.2']);
         $this->assertSame('2026-jul → VULN-39341', $rows['Isolated Patches'][1]);
+        $this->assertSame([Status::OK, 'Verified in code (3/3 hunks)'], $rows['patches/sep.patch']);
+        $this->assertSame([Status::ERROR, 'Partially in code (1/4 hunks)'], $rows['patches/aug.patch']);
     }
 
     public function testTheCompatibilityTabShowsBlockersAndOutdatedPackages(): void

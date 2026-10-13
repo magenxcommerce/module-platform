@@ -17,8 +17,8 @@ use Magento\Framework\Serialize\Serializer\Json;
  *
  * Everything the Security and Compatibility tabs know about this installation
  * that Magento does not already hold comes from here: composer.json and
- * composer.lock, composer-patches' records, the installed-packages manifest and
- * the m2-hotfixes/ directory. Nothing is executed — `composer audit` and
+ * composer.lock, composer-patches' records, the installed-packages manifest,
+ * the patch directories and the vendor files those patches change. Nothing is executed — `composer audit` and
  * `magento-patches status` both need process execution, which a hardened store
  * disables for the PHP user, and should.
  *
@@ -85,6 +85,33 @@ class ProjectFiles
     }
 
     /**
+     * One text file, relative to the Magento root, at most $maxBytes long.
+     *
+     * @param string $path
+     * @param int $maxBytes
+     * @return array{data: string|null, state: string, path: string}
+     */
+    public function readText(string $path, int $maxBytes = self::MAX_FILE_BYTES): array
+    {
+        $root = $this->filesystem->getDirectoryRead(DirectoryList::ROOT);
+        $data = null;
+        try {
+            if (!$root->isFile($path)) {
+                $state = 'absent';
+            } elseif ((int) ($root->stat($path)['size'] ?? 0) > $maxBytes) {
+                $state = 'unreadable';
+            } else {
+                $data = (string) $root->readFile($path);
+                $state = 'read';
+            }
+        } catch (\Throwable) {
+            $state = 'unreadable';
+        }
+
+        return ['data' => $data, 'state' => $state, 'path' => $path];
+    }
+
+    /**
      * Composer's record of what is installed, wherever vendor/ is.
      *
      * @return array{data: array<mixed>|null, state: string, path: string}
@@ -113,6 +140,43 @@ class ProjectFiles
         }
 
         return ['files' => $files, 'state' => 'read', 'path' => $directory];
+    }
+
+    /**
+     * The files under one directory, descending $depth levels into
+     * subdirectories — an Adobe patch archive unpacks into a folder of its own.
+     *
+     * @param string $directory
+     * @param int $depth
+     * @param int $limit
+     * @return array{files: string[], state: string, path: string}
+     */
+    public function listFiles(string $directory, int $depth = 1, int $limit = 500): array
+    {
+        $listing = $this->listDirectory($directory);
+        if ($listing['state'] !== 'read') {
+            return $listing;
+        }
+
+        $root = $this->filesystem->getDirectoryRead(DirectoryList::ROOT);
+        $files = [];
+        foreach ($listing['files'] as $path) {
+            if (count($files) >= $limit) {
+                break;
+            }
+            try {
+                if ($root->isFile($path)) {
+                    $files[] = $path;
+                } elseif ($depth > 0 && $root->isDirectory($path)) {
+                    array_push($files, ...$this->listFiles($path, $depth - 1, $limit - count($files))['files']);
+                }
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+        sort($files);
+
+        return ['files' => array_slice($files, 0, $limit), 'state' => 'read', 'path' => $directory];
     }
 
     /**
