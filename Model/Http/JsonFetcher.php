@@ -46,13 +46,14 @@ class JsonFetcher
      * @param string $url
      * @param string|null $user
      * @param string|null $password
+     * @param int|null $timeout Seconds; the configured backend timeout when null.
      * @return array|null
      */
-    public function fetch(string $url, ?string $user = null, ?string $password = null): ?array
+    public function fetch(string $url, ?string $user = null, ?string $password = null, ?int $timeout = null): ?array
     {
         $this->lastError = '';
 
-        $body = $this->fetcher->fetch($url, $user, $password);
+        $body = $this->fetcher->fetch($url, $user, $password, $timeout);
         if ($body === null) {
             $this->lastError = $this->fetcher->getLastError();
 

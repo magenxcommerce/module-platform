@@ -24,7 +24,7 @@
                     part of every deployment, and the multiselect is generated from the
                     collector pool, so the tab is offered without being switched on.
                 -->
-                <enabled_collectors>mariadb,redis,rabbitmq,opensearch,php,nginx,frankenphp</enabled_collectors>
+                <enabled_collectors>mariadb,redis,rabbitmq,opensearch,php,nginx,frankenphp,security,compatibility</enabled_collectors>
             </collectors>
             <endpoints>
                 <nginx_status_url>http://nginx/nginx_status</nginx_status_url>
@@ -43,6 +43,23 @@
                 -->
                 <frankenphp_metrics_url>http://frankenphp:2020/metrics</frankenphp_metrics_url>
             </endpoints>
+            <!--
+                The Security and Compatibility tabs ask four public services:
+                magento.watch for the release's open bulletins and system
+                requirements, Packagist for advisories against locked packages
+                and for their newest versions, and the Mage-OS mirror for the
+                composer manifest of the release an upgrade would install. What
+                leaves the server is the release string and package names, never
+                credentials, over https only. Off, both tabs still report the
+                installed release, local patch records and measured versions.
+            -->
+            <advisories>
+                <enabled>1</enabled>
+                <release_api_url>https://magento.watch/api/v1</release_api_url>
+                <packagist_url>https://packagist.org</packagist_url>
+                <packagist_repo_url>https://repo.packagist.org</packagist_repo_url>
+                <magento_repo_url>https://mirror.mage-os.org</magento_repo_url>
+            </advisories>
         </magenx_platform>
     </default>
 </config>

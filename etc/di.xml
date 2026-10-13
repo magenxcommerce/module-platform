@@ -22,7 +22,19 @@
                 <item name="nginx" xsi:type="object">Magenx\Platform\Model\Collector\Nginx</item>
                 <item name="imgproxy" xsi:type="object">Magenx\Platform\Model\Collector\ImgProxy</item>
                 <item name="frankenphp" xsi:type="object">Magenx\Platform\Model\Collector\FrankenPhp</item>
+                <item name="security" xsi:type="object">Magenx\Platform\Model\Collector\Security</item>
+                <item name="compatibility" xsi:type="object">Magenx\Platform\Model\Collector\Compatibility</item>
             </argument>
+        </arguments>
+    </type>
+    <!--
+        The Compatibility tab sits in the pool above and reaches EnvironmentVersions,
+        which reads the version rows of the other tabs from that same pool. A real
+        pool here would be a construction cycle; the proxy defers it to first use.
+    -->
+    <type name="Magenx\Platform\Model\Security\EnvironmentVersions">
+        <arguments>
+            <argument name="pool" xsi:type="object">Magenx\Platform\Model\CollectorPool\Proxy</argument>
         </arguments>
     </type>
 </config>
