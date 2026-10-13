@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace Magenx\Platform\Test\Unit\Framework\Security;
 
-use Magenx\Platform\Model\Config;
 use Magenx\Platform\Model\Security\PatchEvidence;
 use Magenx\Platform\Model\Security\PatchVerifier;
 use Magenx\Platform\Model\Security\ProjectFiles;
@@ -87,8 +86,6 @@ class PatchEvidenceTest extends TestCase
                 'composer_patches_v2',
                 'composer_json',
                 'patch_status_registry',
-                'patch_status_log',
-                'patch_dir',
                 'm2_hotfixes',
                 'patch_status_cache',
             ],
@@ -98,32 +95,16 @@ class PatchEvidenceTest extends TestCase
 
     public function testAPatchAppliedByHandIsVerifiedInTheCode(): void
     {
-        $evidence = $this->evidence([], ['patches/APSB26-146_VULN-39341_2.4.8-p5.patch'], [
-            'patches/APSB26-146_VULN-39341_2.4.8-p5.patch' => self::PATCH,
+        $evidence = $this->evidence([], ['m2-hotfixes/APSB26-146_VULN-39341_2.4.8-p5.patch'], [
+            'm2-hotfixes/APSB26-146_VULN-39341_2.4.8-p5.patch' => self::PATCH,
             'vendor/magento/framework/Escaper.php' => "<?php\nreturn htmlspecialchars(\$v);\n",
         ]);
 
         $match = $evidence->match(['VULN-39341', 'APSB26-146']);
 
         $this->assertSame(PatchEvidence::VERIFIED, $match['status']);
-        $this->assertSame('patch_dir', $match['matches'][0]['source']);
+        $this->assertSame('m2_hotfixes', $match['matches'][0]['source']);
         $this->assertSame(PatchEvidence::PRESENT, $match['matches'][0]['record_status']);
-    }
-
-    public function testAMonthlyPatchIsFoundByItsNumericMonth(): void
-    {
-        $evidence = $this->evidence([], [
-            'patches/248p5-2026-07-001-CE.diff',
-            'patches/248p5-2026-10-001-CE.diff',
-        ]);
-
-        $this->assertSame(PatchEvidence::PRESENT, $evidence->match(['2026-jul'])['status']);
-        $this->assertSame(
-            '248p5-2026-07-001-CE.diff',
-            $evidence->match(['2026-jul', 'APSB26-73'])['matches'][0]['description']
-        );
-        $this->assertSame(PatchEvidence::NO_EVIDENCE, $evidence->match(['2026-aug'])['status']);
-        $this->assertSame(PatchEvidence::NO_EVIDENCE, $evidence->match(['2026-jan'])['status']);
     }
 
     public function testADiffPatchStatusDownloadedIsNoEvidenceUntilTheCodeHasIt(): void
@@ -148,28 +129,6 @@ class PatchEvidenceTest extends TestCase
         $match = $this->evidence($registry, $cached, $patched)->match(['2026-sep'], ['CVE-2026-76200']);
         $this->assertSame(PatchEvidence::VERIFIED, $match['status']);
         $this->assertSame('ACSD-2026-09-001', $match['matches'][0]['patch_id']);
-    }
-
-    public function testOnlyTheLastPatchStatusRunCounts(): void
-    {
-        $evidence = $this->evidence(
-            ['var/patch_metadata/.patch_registry_cache.json' => ['patches' => [
-                'P-JUL' => ['file_name' => '248p5-2026-07-001-CE.diff', 'cves' => ['CVE-2026-48356']],
-                'P-AUG' => ['file_name' => '248p5-2026-08-001-CE.diff', 'cves' => ['CVE-2026-48414']],
-            ]]],
-            [],
-            ['var/log/patch_status.log' => implode("\n", [
-                '[2026-10-01T10:00:00+00:00] base=2.4.8-p5 applied=[] missing=[P-JUL,P-AUG] unknown=[]',
-                '[2026-10-13T15:44:00+00:00] base=2.4.8-p5 applied=[P-JUL] missing=[P-AUG] unknown=[]',
-                '[2026-10-13T15:44:00+00:00] UNKNOWN P-X:',
-                'FWD:',
-            ])]
-        );
-
-        $july = $evidence->match(['2026-jul'], ['CVE-2026-48356']);
-        $this->assertSame(PatchEvidence::APPLIED, $july['status']);
-        $this->assertStringContainsString('2026-10-13', $july['matches'][0]['description']);
-        $this->assertSame(PatchEvidence::NOT_IN_CODE, $evidence->match(['2026-aug'], ['CVE-2026-48414'])['status']);
     }
 
     public function testTheCodeOverridesARecordThatSaysApplied(): void
@@ -202,7 +161,7 @@ class PatchEvidenceTest extends TestCase
 
     /**
      * @param array<string, array<mixed>> $json Path => decoded contents; anything else is absent.
-     * @param string[] $patchFiles Files in m2-hotfixes/ or patches/.
+     * @param string[] $patchFiles Files in m2-hotfixes/ or patch-status's cache.
      * @param array<string, string> $text Path => contents of patch and code files.
      */
     private function evidence(array $json, array $patchFiles = [], array $text = []): PatchEvidence
@@ -218,7 +177,7 @@ class PatchEvidenceTest extends TestCase
         $files->method('installedJson')->willReturnCallback(
             static fn (): array => $files->readJson('vendor/composer/installed.json')
         );
-        $files->method('listFiles')->willReturnCallback(
+        $files->method('listDirectory')->willReturnCallback(
             static function (string $directory) use ($patchFiles): array {
                 $found = array_values(array_filter(
                     $patchFiles,
@@ -237,9 +196,6 @@ class PatchEvidenceTest extends TestCase
         );
         $files->method('vendorPath')->willReturn('vendor');
 
-        $config = $this->createMock(Config::class);
-        $config->method('getPatchDirs')->willReturn(['patches', 'm2-hotfixes']);
-
-        return new PatchEvidence($files, new PatchVerifier($files), $config);
+        return new PatchEvidence($files, new PatchVerifier($files));
     }
 }

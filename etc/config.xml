@@ -59,7 +59,6 @@
                 <packagist_url>https://packagist.org</packagist_url>
                 <packagist_repo_url>https://repo.packagist.org</packagist_repo_url>
                 <magento_repo_url>https://mirror.mage-os.org</magento_repo_url>
-                <patch_dirs>patches,m2-hotfixes</patch_dirs>
             </advisories>
         </magenx_platform>
     </default>

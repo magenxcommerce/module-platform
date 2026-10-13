@@ -8,8 +8,6 @@ declare(strict_types=1);
 
 namespace Magenx\Platform\Model\Security;
 
-use Magenx\Platform\Model\Config;
-
 /**
  * What this installation records about the patches applied to it.
  *
@@ -24,21 +22,20 @@ use Magenx\Platform\Model\Config;
  *   file and applies exactly that set on install. Applied.
  * - `composer.json` `extra.patches` and the file `extra.patches-file` names.
  *   Declared: applied on the next install, which may or may not have run.
- * - `*.patch` / `*.diff` in the configured patch directories (`patches/` and
- *   `m2-hotfixes/` — what Adobe Commerce Cloud applies on every build — by
- *   default). Present.
- * - Adobe's `vendor/bin/patch-status`, which leaves three things: the last
- *   verdict of its `patch --dry-run` in `var/log/patch_status.log` (applied, or
- *   missing), the registry it read in
- *   `var/patch_metadata/.patch_registry_cache.json` (each patch's file and
- *   CVEs, which is how its patches are matched to bulletins), and the diffs it
- *   downloaded to check in `var/patch_metadata/.patch_diffs/`. Those diffs are
- *   a cache, not a record of applying: alone they are no evidence, and only
- *   the code check below can move them.
+ * - `m2-hotfixes/*.patch` — the directory Adobe Commerce Cloud applies on every
+ *   build, and a common convention elsewhere. Present.
+ * - Adobe's `vendor/bin/patch-status` downloads the monthly patches into
+ *   `var/patch_metadata/.patch_diffs/` and their registry — each patch's file
+ *   and the CVEs it closes — into `var/patch_metadata/.patch_registry_cache.json`.
+ *   The diffs are a cache, not a record of applying: alone they are no
+ *   evidence. Its verdict needs `patch` run through proc_open, which a
+ *   hardened store disables even on the CLI, so it is not read; the code check
+ *   below answers the same question without it.
  *
  * None of those says what the code holds now. So every patch file that can be
- * read — in a patch directory, or a local file a composer-patches record names
- * — is also checked hunk by hunk against the files it changes
+ * read — in m2-hotfixes/, patch-status's cache, or a local file a
+ * composer-patches record names — is also checked hunk by hunk against the
+ * files it changes
  * ({@see PatchVerifier}), and that answer outranks the record: `verified` when
  * every hunk is in the code, `partial`, or `not_in_code` when the code is still
  * unpatched whatever a record claims. That is what credits a patch applied by
@@ -61,17 +58,8 @@ class PatchEvidence
 
     private const PATCH_STATUS_DIR = 'var/patch_metadata/.patch_diffs';
     private const PATCH_STATUS_REGISTRY = 'var/patch_metadata/.patch_registry_cache.json';
-    private const PATCH_STATUS_LOG = 'var/log/patch_status.log';
-
-    /** patch-status appends a line per run; the last one is all that is read. */
-    private const MAX_LOG_BYTES = 8388608;
 
     private const PATCH_EXTENSIONS = ['patch', 'diff'];
-
-    private const MONTHS = [
-        'jan' => '01', 'feb' => '02', 'mar' => '03', 'apr' => '04', 'may' => '05', 'jun' => '06',
-        'jul' => '07', 'aug' => '08', 'sep' => '09', 'oct' => '10', 'nov' => '11', 'dec' => '12',
-    ];
 
     /** What the code says about a patch file, as the evidence it amounts to. */
     private const CODE_EVIDENCE = [
@@ -84,27 +72,23 @@ class PatchEvidence
 
     private PatchVerifier $verifier;
 
-    private Config $config;
-
     /** @var array{sources: array<int, array<string, mixed>>, entries: array<int, array<string, mixed>>}|null */
     private ?array $collected = null;
 
     /** @var array<string, string[]> Patch file => the other patch files in its directory. */
     private array $siblings = [];
 
-    /** @var array<string, array{id: string, cves: string[], file: string|null}> patch-status's, by id and file. */
+    /** @var array<string, array{id: string, cves: string[]}> patch-status's registry, by diff file name. */
     private array $registry = [];
 
     /**
      * @param ProjectFiles $files
      * @param PatchVerifier $verifier
-     * @param Config $config
      */
-    public function __construct(ProjectFiles $files, PatchVerifier $verifier, Config $config)
+    public function __construct(ProjectFiles $files, PatchVerifier $verifier)
     {
         $this->files = $files;
         $this->verifier = $verifier;
-        $this->config = $config;
     }
 
     /**
@@ -150,39 +134,21 @@ class PatchEvidence
             $this,
             'fromPatchStatusRegistry',
         ]);
-        $sources[array_key_last($sources)]['entries'] = count(array_unique(array_column($this->registry, 'id')));
-        $log = $this->files->readText(self::PATCH_STATUS_LOG, self::MAX_LOG_BYTES);
-        $found = $log['data'] === null ? [] : $this->fromPatchStatusLog($log['data']);
-        $sources[] = [
-            'source' => 'patch_status_log',
-            'path' => $log['path'],
-            'state' => $log['state'],
-            'entries' => count($found),
-        ];
-        array_push($entries, ...$found);
+        $sources[array_key_last($sources)]['entries'] = count($this->registry);
 
-        $directories = $this->config->getPatchDirs();
-        if (!in_array(self::PATCH_STATUS_DIR, $directories, true)) {
-            $directories[] = self::PATCH_STATUS_DIR;
-        }
-        foreach ($directories as $directory) {
-            $cache = $directory === self::PATCH_STATUS_DIR;
-            $source = match (true) {
-                $cache => 'patch_status_cache',
-                $directory === self::HOTFIX_DIR => 'm2_hotfixes',
-                default => 'patch_dir',
-            };
-            $listing = $this->files->listFiles($directory);
+        $directories = [self::HOTFIX_DIR => 'm2_hotfixes', self::PATCH_STATUS_DIR => 'patch_status_cache'];
+        foreach ($directories as $dir => $source) {
+            $listing = $this->files->listDirectory($dir);
             $patches = array_values(array_filter($listing['files'], [$this, 'isPatchFile']));
             $found = [];
             foreach ($patches as $path) {
                 $this->siblings[$path] = $patches;
                 $name = substr($path, (int) strrpos('/' . $path, '/'));
-                $entry = $this->entry($source, $cache ? self::NO_EVIDENCE : self::PRESENT, null, $name, $path);
-                $known = $this->registry[$name] ?? null;
-                if ($known !== null) {
-                    $entry['patch_id'] = $known['id'];
-                    $entry['cves'] = $known['cves'];
+                $cached = $dir === self::PATCH_STATUS_DIR;
+                $entry = $this->entry($source, $cached ? self::NO_EVIDENCE : self::PRESENT, null, $name, $path);
+                if (isset($this->registry[$name])) {
+                    $entry['patch_id'] = $this->registry[$name]['id'];
+                    $entry['cves'] = $this->registry[$name]['cves'];
                 }
                 $found[] = $entry;
             }
@@ -203,9 +169,10 @@ class PatchEvidence
     }
 
     /**
-     * patch-status's registry: what each patch is called on disk and which
+     * patch-status's registry: what each patch's diff is called and which
      * CVEs it closes. It yields no entries of its own — a registry says what
-     * exists, not what was applied — only the lookup the others are matched by.
+     * exists, not what was applied — only the lookup its cached diffs are
+     * matched to bulletins by.
      *
      * @param array<mixed> $data
      * @return array<int, array<string, mixed>>
@@ -216,55 +183,16 @@ class PatchEvidence
             if (!is_string($id) || !is_array($patch)) {
                 continue;
             }
-            $file = is_string($patch['file_name'] ?? null) ? $patch['file_name'] : null;
-            $known = [
+            if (!is_string($patch['file_name'] ?? null)) {
+                continue;
+            }
+            $this->registry[$patch['file_name']] = [
                 'id' => $id,
                 'cves' => array_values(array_filter((array) ($patch['cves'] ?? []), 'is_string')),
-                'file' => $file,
             ];
-            $this->registry[$id] = $known;
-            if ($file !== null) {
-                $this->registry[$file] = $known;
-            }
         }
 
         return [];
-    }
-
-    /**
-     * patch-status's last verdict: `[date] base=2.4.8-p5 applied=[a,b]
-     * missing=[c] unknown=[d]`, one line per run, from `patch --dry-run` both
-     * ways. Older lines describe code that may have changed since.
-     *
-     * @param string $log
-     * @return array<int, array<string, mixed>>
-     */
-    private function fromPatchStatusLog(string $log): array
-    {
-        $pattern = '/^\[([^\]]+)\] base=(\S+) applied=\[([^\]]*)\] missing=\[([^\]]*)\]/m';
-        if (preg_match_all($pattern, $log, $runs, PREG_SET_ORDER) < 1) {
-            return [];
-        }
-        [, $date, $base, $applied, $missing] = end($runs);
-
-        $entries = [];
-        foreach ([self::APPLIED => $applied, self::NOT_IN_CODE => $missing] as $status => $list) {
-            foreach (array_filter(array_map('trim', explode(',', $list))) as $id) {
-                $known = $this->registry[$id] ?? null;
-                $entry = $this->entry(
-                    'patch_status_log',
-                    $status,
-                    null,
-                    sprintf('%s %s (patch-status %s, base %s)', $id, $known['file'] ?? '', $date, $base),
-                    ''
-                );
-                $entry['patch_id'] = $id;
-                $entry['cves'] = $known['cves'] ?? [];
-                $entries[] = $entry;
-            }
-        }
-
-        return $entries;
     }
 
     /**
@@ -278,11 +206,10 @@ class PatchEvidence
      * entry's description or reference — Adobe names both the patch files and
      * their composer descriptions after the patch (`VULN-39341_248-p3.patch`)
      * or the bulletin. Underscores are read as hyphens so `2026_jul` and
-     * `2026-jul` are the same id, and a monthly patch is also found by its
-     * numeric month: `2026-jul` matches `248p5-2026-07-001-CE.diff`.
+     * `2026-jul` are the same id.
      *
-     * An entry that knows the CVEs it closes (from patch-status's registry)
-     * also matches when it shares one with $cves.
+     * A diff patch-status cached carries the CVEs its registry lists, and
+     * matches when it shares one with $cves.
      *
      * @param string[] $ids Patch and bulletin ids, e.g. ["VULN-39341", "APSB26-146"].
      * @param string[] $cves The bulletin's CVEs.
@@ -297,13 +224,6 @@ class PatchEvidence
             $ids
         )));
 
-        $months = [];
-        foreach ($needles as $needle) {
-            if (preg_match('/^(\d{4})-([a-z]{3})$/', $needle, $month) === 1 && isset(self::MONTHS[$month[2]])) {
-                $months[] = sprintf('/(?<![0-9])%s-%s(?![0-9])/', $month[1], self::MONTHS[$month[2]]);
-            }
-        }
-
         $matches = [];
         foreach ($this->collect()['entries'] as $entry) {
             if ($cves !== [] && array_intersect($cves, array_map('strtoupper', $entry['cves'])) !== []) {
@@ -315,12 +235,6 @@ class PatchEvidence
             ));
             foreach ($needles as $needle) {
                 if (str_contains($haystack, $needle)) {
-                    $matches[] = $entry;
-                    continue 2;
-                }
-            }
-            foreach ($months as $pattern) {
-                if (preg_match($pattern, $haystack) === 1) {
                     $matches[] = $entry;
                     continue 2;
                 }
