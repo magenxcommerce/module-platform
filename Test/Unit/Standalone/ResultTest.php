@@ -54,6 +54,18 @@ class ResultTest extends TestCase
         $this->assertSame(Status::ERROR, $payload['status']);
     }
 
+    public function testOnlyASectionMarkedWideCarriesTheFlag(): void
+    {
+        $payload = $this->newResult()
+            ->add('Required Patches', 'VULN-39341', 'Verified in code', Status::OK)
+            ->add('Release', 'Version', '2.4.8-p5')
+            ->setWide('Required Patches')
+            ->toArray();
+
+        $this->assertTrue($payload['sections'][0]['wide']);
+        $this->assertArrayNotHasKey('wide', $payload['sections'][1]);
+    }
+
     public function testTheTabStatusIsTheWorstOfEverySection(): void
     {
         $result = $this->newResult();

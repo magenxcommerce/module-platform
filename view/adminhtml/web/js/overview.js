@@ -86,7 +86,10 @@ define(['mage/translate'], function ($t) {
      * @returns {HTMLElement}
      */
     function renderSection(section) {
-        var card = el('div', 'magenx-platform-card _status-' + (section.status || 'info'));
+        var card = el(
+            'div',
+            'magenx-platform-card _status-' + (section.status || 'info') + (section.wide ? ' _wide' : '')
+        );
 
         card.appendChild(el('h3', 'magenx-platform-card-title', section.label));
         (section.rows || []).forEach(function (row) {

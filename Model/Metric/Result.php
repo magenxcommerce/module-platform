@@ -29,6 +29,11 @@ class Result
     private array $sections = [];
 
     /**
+     * @var array<string, true> Sections drawn across the whole grid row.
+     */
+    private array $wide = [];
+
+    /**
      * @param Status $status
      */
     public function __construct(Status $status)
@@ -58,6 +63,20 @@ class Result
     public function setStatus(string $status): self
     {
         $this->overrideStatus = $status;
+
+        return $this;
+    }
+
+    /**
+     * Draw a section across the whole width of the tab, for a card whose rows
+     * carry long hints that a single grid column would squeeze.
+     *
+     * @param string $section
+     * @return $this
+     */
+    public function setWide(string $section): self
+    {
+        $this->wide[$section] = true;
 
         return $this;
     }
@@ -115,11 +134,15 @@ class Result
                 $serialized[] = $row->toArray();
             }
             $worst = $this->status->worst($worst, $sectionStatus);
-            $sections[] = [
+            $section = [
                 'label' => $label,
                 'status' => $sectionStatus,
                 'rows' => $serialized,
             ];
+            if (isset($this->wide[$label])) {
+                $section['wide'] = true;
+            }
+            $sections[] = $section;
         }
 
         return [
