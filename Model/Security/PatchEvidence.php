@@ -25,8 +25,16 @@ use Magenx\Platform\Model\Config;
  * - `composer.json` `extra.patches` and the file `extra.patches-file` names.
  *   Declared: applied on the next install, which may or may not have run.
  * - `*.patch` / `*.diff` in the configured patch directories (`patches/` and
- *   `m2-hotfixes/` by default — the latter is what Adobe Commerce Cloud applies
- *   on every build). Present.
+ *   `m2-hotfixes/` — what Adobe Commerce Cloud applies on every build — by
+ *   default). Present.
+ * - Adobe's `vendor/bin/patch-status`, which leaves three things: the last
+ *   verdict of its `patch --dry-run` in `var/log/patch_status.log` (applied, or
+ *   missing), the registry it read in
+ *   `var/patch_metadata/.patch_registry_cache.json` (each patch's file and
+ *   CVEs, which is how its patches are matched to bulletins), and the diffs it
+ *   downloaded to check in `var/patch_metadata/.patch_diffs/`. Those diffs are
+ *   a cache, not a record of applying: alone they are no evidence, and only
+ *   the code check below can move them.
  *
  * None of those says what the code holds now. So every patch file that can be
  * read — in a patch directory, or a local file a composer-patches record names
@@ -51,7 +59,19 @@ class PatchEvidence
 
     private const HOTFIX_DIR = 'm2-hotfixes';
 
+    private const PATCH_STATUS_DIR = 'var/patch_metadata/.patch_diffs';
+    private const PATCH_STATUS_REGISTRY = 'var/patch_metadata/.patch_registry_cache.json';
+    private const PATCH_STATUS_LOG = 'var/log/patch_status.log';
+
+    /** patch-status appends a line per run; the last one is all that is read. */
+    private const MAX_LOG_BYTES = 8388608;
+
     private const PATCH_EXTENSIONS = ['patch', 'diff'];
+
+    private const MONTHS = [
+        'jan' => '01', 'feb' => '02', 'mar' => '03', 'apr' => '04', 'may' => '05', 'jun' => '06',
+        'jul' => '07', 'aug' => '08', 'sep' => '09', 'oct' => '10', 'nov' => '11', 'dec' => '12',
+    ];
 
     /** What the code says about a patch file, as the evidence it amounts to. */
     private const CODE_EVIDENCE = [
@@ -69,6 +89,12 @@ class PatchEvidence
     /** @var array{sources: array<int, array<string, mixed>>, entries: array<int, array<string, mixed>>}|null */
     private ?array $collected = null;
 
+    /** @var array<string, string[]> Patch file => the other patch files in its directory. */
+    private array $siblings = [];
+
+    /** @var array<string, array{id: string, cves: string[], file: string|null}> patch-status's, by id and file. */
+    private array $registry = [];
+
     /**
      * @param ProjectFiles $files
      * @param PatchVerifier $verifier
@@ -84,9 +110,9 @@ class PatchEvidence
     /**
      * Every patch record found, and what was looked at to find them.
      *
-     * Each entry is `{source, status, package, description, reference, code}`,
-     * `code` being the {@see PatchVerifier} result when the entry names a patch
-     * file that could be read, and null otherwise;
+     * Each entry is `{source, status, package, description, reference,
+     * patch_id, cves, code}`, `code` being the {@see PatchVerifier} result when
+     * the entry names a local patch file, and null otherwise;
      * each source is `{source, path, state, entries}`, where `state` is
      * `read`, `absent` or `unreadable` — the last being a hardened store
      * keeping the PHP user out, which is worth knowing rather than reading as
@@ -120,15 +146,45 @@ class PatchEvidence
             $this->add($sources, $entries, 'composer_patches_file', $declared, [$this, 'fromPatchesFile']);
         }
 
-        foreach ($this->config->getPatchDirs() as $directory) {
-            $source = $directory === self::HOTFIX_DIR ? 'm2_hotfixes' : 'patch_dir';
+        $this->add($sources, $entries, 'patch_status_registry', $this->files->readJson(self::PATCH_STATUS_REGISTRY), [
+            $this,
+            'fromPatchStatusRegistry',
+        ]);
+        $sources[array_key_last($sources)]['entries'] = count(array_unique(array_column($this->registry, 'id')));
+        $log = $this->files->readText(self::PATCH_STATUS_LOG, self::MAX_LOG_BYTES);
+        $found = $log['data'] === null ? [] : $this->fromPatchStatusLog($log['data']);
+        $sources[] = [
+            'source' => 'patch_status_log',
+            'path' => $log['path'],
+            'state' => $log['state'],
+            'entries' => count($found),
+        ];
+        array_push($entries, ...$found);
+
+        $directories = $this->config->getPatchDirs();
+        if (!in_array(self::PATCH_STATUS_DIR, $directories, true)) {
+            $directories[] = self::PATCH_STATUS_DIR;
+        }
+        foreach ($directories as $directory) {
+            $cache = $directory === self::PATCH_STATUS_DIR;
+            $source = match (true) {
+                $cache => 'patch_status_cache',
+                $directory === self::HOTFIX_DIR => 'm2_hotfixes',
+                default => 'patch_dir',
+            };
             $listing = $this->files->listFiles($directory);
+            $patches = array_values(array_filter($listing['files'], [$this, 'isPatchFile']));
             $found = [];
-            foreach ($listing['files'] as $path) {
-                if ($this->isPatchFile($path)) {
-                    $name = substr($path, (int) strrpos('/' . $path, '/'));
-                    $found[] = $this->entry($source, self::PRESENT, null, $name, $path);
+            foreach ($patches as $path) {
+                $this->siblings[$path] = $patches;
+                $name = substr($path, (int) strrpos('/' . $path, '/'));
+                $entry = $this->entry($source, $cache ? self::NO_EVIDENCE : self::PRESENT, null, $name, $path);
+                $known = $this->registry[$name] ?? null;
+                if ($known !== null) {
+                    $entry['patch_id'] = $known['id'];
+                    $entry['cves'] = $known['cves'];
                 }
+                $found[] = $entry;
             }
             $sources[] = [
                 'source' => $source,
@@ -147,6 +203,71 @@ class PatchEvidence
     }
 
     /**
+     * patch-status's registry: what each patch is called on disk and which
+     * CVEs it closes. It yields no entries of its own — a registry says what
+     * exists, not what was applied — only the lookup the others are matched by.
+     *
+     * @param array<mixed> $data
+     * @return array<int, array<string, mixed>>
+     */
+    private function fromPatchStatusRegistry(array $data): array
+    {
+        foreach ((array) ($data['patches'] ?? []) as $id => $patch) {
+            if (!is_string($id) || !is_array($patch)) {
+                continue;
+            }
+            $file = is_string($patch['file_name'] ?? null) ? $patch['file_name'] : null;
+            $known = [
+                'id' => $id,
+                'cves' => array_values(array_filter((array) ($patch['cves'] ?? []), 'is_string')),
+                'file' => $file,
+            ];
+            $this->registry[$id] = $known;
+            if ($file !== null) {
+                $this->registry[$file] = $known;
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * patch-status's last verdict: `[date] base=2.4.8-p5 applied=[a,b]
+     * missing=[c] unknown=[d]`, one line per run, from `patch --dry-run` both
+     * ways. Older lines describe code that may have changed since.
+     *
+     * @param string $log
+     * @return array<int, array<string, mixed>>
+     */
+    private function fromPatchStatusLog(string $log): array
+    {
+        $pattern = '/^\[([^\]]+)\] base=(\S+) applied=\[([^\]]*)\] missing=\[([^\]]*)\]/m';
+        if (preg_match_all($pattern, $log, $runs, PREG_SET_ORDER) < 1) {
+            return [];
+        }
+        [, $date, $base, $applied, $missing] = end($runs);
+
+        $entries = [];
+        foreach ([self::APPLIED => $applied, self::NOT_IN_CODE => $missing] as $status => $list) {
+            foreach (array_filter(array_map('trim', explode(',', $list))) as $id) {
+                $known = $this->registry[$id] ?? null;
+                $entry = $this->entry(
+                    'patch_status_log',
+                    $status,
+                    null,
+                    sprintf('%s %s (patch-status %s, base %s)', $id, $known['file'] ?? '', $date, $base),
+                    ''
+                );
+                $entry['patch_id'] = $id;
+                $entry['cves'] = $known['cves'] ?? [];
+                $entries[] = $entry;
+            }
+        }
+
+        return $entries;
+    }
+
+    /**
      * The strongest evidence that any of the given ids was applied.
      *
      * Where the code could be checked, the code decides: `verified` if any
@@ -157,25 +278,51 @@ class PatchEvidence
      * entry's description or reference — Adobe names both the patch files and
      * their composer descriptions after the patch (`VULN-39341_248-p3.patch`)
      * or the bulletin. Underscores are read as hyphens so `2026_jul` and
-     * `2026-jul` are the same id.
+     * `2026-jul` are the same id, and a monthly patch is also found by its
+     * numeric month: `2026-jul` matches `248p5-2026-07-001-CE.diff`.
+     *
+     * An entry that knows the CVEs it closes (from patch-status's registry)
+     * also matches when it shares one with $cves.
      *
      * @param string[] $ids Patch and bulletin ids, e.g. ["VULN-39341", "APSB26-146"].
+     * @param string[] $cves The bulletin's CVEs.
      * @return array{status: string, matches: array<int, array<string, mixed>>}
      */
-    public function match(array $ids): array
+    public function match(array $ids, array $cves = []): array
     {
+        $cves = array_map('strtoupper', array_filter($cves, 'is_string'));
+
         $needles = array_values(array_filter(array_map(
             static fn ($id): string => is_string($id) ? str_replace('_', '-', strtolower(trim($id))) : '',
             $ids
         )));
 
+        $months = [];
+        foreach ($needles as $needle) {
+            if (preg_match('/^(\d{4})-([a-z]{3})$/', $needle, $month) === 1 && isset(self::MONTHS[$month[2]])) {
+                $months[] = sprintf('/(?<![0-9])%s-%s(?![0-9])/', $month[1], self::MONTHS[$month[2]]);
+            }
+        }
+
         $matches = [];
         foreach ($this->collect()['entries'] as $entry) {
-            $haystack = str_replace('_', '-', strtolower($entry['description'] . ' ' . $entry['reference']));
+            if ($cves !== [] && array_intersect($cves, array_map('strtoupper', $entry['cves'])) !== []) {
+                $matches[] = $entry;
+                continue;
+            }
+            $haystack = str_replace('_', '-', strtolower(
+                $entry['description'] . ' ' . $entry['reference'] . ' ' . $entry['patch_id']
+            ));
             foreach ($needles as $needle) {
                 if (str_contains($haystack, $needle)) {
                     $matches[] = $entry;
-                    break;
+                    continue 2;
+                }
+            }
+            foreach ($months as $pattern) {
+                if (preg_match($pattern, $haystack) === 1) {
+                    $matches[] = $entry;
+                    continue 2;
                 }
             }
         }
@@ -214,7 +361,11 @@ class PatchEvidence
             return $entry;
         }
 
-        $entry['code'] = $this->verifier->verify($reference, $entry['package']);
+        $entry['code'] = $this->verifier->verify(
+            $reference,
+            $entry['package'],
+            $this->siblings[$entry['reference']] ?? []
+        );
         if (isset(self::CODE_EVIDENCE[$entry['code']['state']])) {
             $entry['record_status'] = $entry['status'];
             $entry['status'] = self::CODE_EVIDENCE[$entry['code']['state']];
@@ -381,6 +532,8 @@ class PatchEvidence
             'package' => $package,
             'description' => is_scalar($description) ? (string) $description : '',
             'reference' => is_scalar($reference) ? (string) $reference : '',
+            'patch_id' => null,
+            'cves' => [],
             'code' => null,
         ];
     }

@@ -183,6 +183,28 @@ class PatchVerifierTest extends TestCase
         );
     }
 
+    public function testAHunkALaterPatchRewroteStillCountsAsApplied(): void
+    {
+        $later = <<<'DIFF'
+            --- a/vendor/magento/module-catalog-inventory/Model/Escaper.php
+            +++ b/vendor/magento/module-catalog-inventory/Model/Escaper.php
+            @@ -5,3 +5,3 @@
+                 {
+            -        return htmlspecialchars($value, ENT_QUOTES);
+            +        return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE);
+                 }
+            DIFF;
+        $code = str_replace('ENT_QUOTES)', 'ENT_QUOTES | ENT_SUBSTITUTE)', self::PATCHED);
+        $files = [self::TARGET => $code, 'd/jul.diff' => self::COMPOSER_PATCH, 'd/aug.diff' => $later];
+
+        $alone = $this->verifier($files)->verify('d/jul.diff');
+        $this->assertSame(PatchVerifier::PARTIAL, $alone['state']);
+
+        $withLater = $this->verifier($files)->verify('d/jul.diff', null, ['d/jul.diff', 'd/aug.diff']);
+        $this->assertSame(PatchVerifier::VERIFIED, $withLater['state']);
+        $this->assertSame(PatchVerifier::VERIFIED, $this->verifier($files)->verify('d/aug.diff')['state']);
+    }
+
     public function testAComposerPatchesRecordResolvesRelativeToItsPackage(): void
     {
         $relative = str_replace('vendor/magento/module-catalog-inventory/', '', self::COMPOSER_PATCH);

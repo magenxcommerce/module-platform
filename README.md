@@ -87,9 +87,18 @@ there), `patches.lock.json` (composer-patches 2.x), the file `extra.patches-file
 `*.patch` / `*.diff` in the patch directories (Stores → Configuration → Magenx → Platform Overview → Security &
 Compatibility → Patch Directories, `patches,m2-hotfixes` by default, one level of subfolders
 read). A patch record matches a bulletin when it names the isolated patch (`VULN-39341`,
-`2026-jul`) or the bulletin (`APSB26-146`). Each source is reported as `read`, `absent` or
+`2026-jul`, or its numeric month as in `248p5-2026-07-001-CE.diff`) or the bulletin
+(`APSB26-146`). Each source is reported as `read`, `absent` or
 `unreadable`; the last is a hardened store keeping the PHP user out, which must not read as
 "no patches".
+
+**From Adobe's `vendor/bin/patch-status`** (the Monthly Security Release Versioning Tool),
+when it has been run from the CLI: the last line of `var/log/patch_status.log` — its
+`patch --dry-run` verdict, `applied=[…] missing=[…]` — and the registry it cached in
+`var/patch_metadata/.patch_registry_cache.json`, which names each patch's diff and the CVEs
+it closes, so its patches are matched to bulletins by CVE. The diffs it downloads into
+`var/patch_metadata/.patch_diffs/` are always read too, but only as a cache: alone they are
+no evidence of applying, and only the code check below can credit or flag them.
 
 **From the code.** A record says a patch was applied; only the files it changes say it still
 is. Every patch file that can be read — in a patch directory, or a local file a
