@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/magenxcommerce/module-platform/compare/v1.4.1...v1.4.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* harden and speed up the patch code check, longer snapshot for deploy-time tabs ([#39](https://github.com/magenxcommerce/module-platform/issues/39)) ([5d3266f](https://github.com/magenxcommerce/module-platform/commit/5d3266f63c7fbbfadea7c3c42fca1f20ef8fa85e))
+
 ## [1.4.1](https://github.com/magenxcommerce/module-platform/compare/v1.4.0...v1.4.1) (2026-10-13)
 
 
