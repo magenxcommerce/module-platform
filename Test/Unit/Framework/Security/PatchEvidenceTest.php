@@ -101,6 +101,22 @@ class PatchEvidenceTest extends TestCase
         $this->assertSame(PatchEvidence::PRESENT, $match['matches'][0]['record_status']);
     }
 
+    public function testAMonthlyPatchIsFoundByItsNumericMonth(): void
+    {
+        $evidence = $this->evidence([], [
+            'patches/248p5-2026-07-001-CE.diff',
+            'patches/248p5-2026-10-001-CE.diff',
+        ]);
+
+        $this->assertSame(PatchEvidence::PRESENT, $evidence->match(['2026-jul'])['status']);
+        $this->assertSame(
+            '248p5-2026-07-001-CE.diff',
+            $evidence->match(['2026-jul', 'APSB26-73'])['matches'][0]['description']
+        );
+        $this->assertSame(PatchEvidence::NO_EVIDENCE, $evidence->match(['2026-aug'])['status']);
+        $this->assertSame(PatchEvidence::NO_EVIDENCE, $evidence->match(['2026-jan'])['status']);
+    }
+
     public function testTheCodeOverridesARecordThatSaysApplied(): void
     {
         $evidence = $this->evidence(

@@ -98,7 +98,7 @@
                 </field>
                 <field id="patch_dirs" translate="label comment" type="text" sortOrder="20" showInDefault="1" canRestore="1">
                     <label>Patch Directories</label>
-                    <comment>Comma-separated directories, relative to the Magento root, where isolated patch files (*.patch, *.diff) are kept — one level of subfolders is read too. The Security tab checks each file's hunks against the vendor code it changes, so a patch applied with patch -p1 or git apply shows as "Verified in code", and one whose record says applied but whose code says otherwise shows as "Not in code". Files are read, never executed.</comment>
+                    <comment>Comma-separated directories, relative to the Magento root, where isolated patch files (*.patch, *.diff) are kept, such as var/patch_metadata/.patch_diffs — one level of subfolders is read too. The Security tab checks each file's hunks against the vendor code it changes, so a patch applied with patch -p1 or git apply shows as "Verified in code", and one whose record says applied but whose code says otherwise shows as "Not in code". Files are read, never executed.</comment>
                 </field>
             </group>
         </section>

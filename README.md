@@ -85,9 +85,10 @@ should.
 `vendor/composer/installed.json` (composer-patches 1.x writes `extra.patches_applied`
 there), `patches.lock.json` (composer-patches 2.x), the file `extra.patches-file` names, and
 `*.patch` / `*.diff` in the patch directories (Stores → Configuration → Magenx → Platform Overview → Security &
-Compatibility → Patch Directories, `patches,m2-hotfixes` by default, one level of subfolders
+Compatibility → Patch Directories, `patches,m2-hotfixes,var/patch_metadata/.patch_diffs` by default, one level of subfolders
 read). A patch record matches a bulletin when it names the isolated patch (`VULN-39341`,
-`2026-jul`) or the bulletin (`APSB26-146`). Each source is reported as `read`, `absent` or
+`2026-jul`, or its numeric month as in `248p5-2026-07-001-CE.diff`) or the bulletin
+(`APSB26-146`). Each source is reported as `read`, `absent` or
 `unreadable`; the last is a hardened store keeping the PHP user out, which must not read as
 "no patches".
 

@@ -24,9 +24,10 @@ use Magenx\Platform\Model\Config;
  *   file and applies exactly that set on install. Applied.
  * - `composer.json` `extra.patches` and the file `extra.patches-file` names.
  *   Declared: applied on the next install, which may or may not have run.
- * - `*.patch` / `*.diff` in the configured patch directories (`patches/` and
- *   `m2-hotfixes/` by default — the latter is what Adobe Commerce Cloud applies
- *   on every build). Present.
+ * - `*.patch` / `*.diff` in the configured patch directories (`patches/`,
+ *   `m2-hotfixes/` — what Adobe Commerce Cloud applies on every build — and
+ *   `var/patch_metadata/.patch_diffs/`, which `vendor/bin/patch-status` writes,
+ *   by default). Present.
  *
  * None of those says what the code holds now. So every patch file that can be
  * read — in a patch directory, or a local file a composer-patches record names
@@ -52,6 +53,11 @@ class PatchEvidence
     private const HOTFIX_DIR = 'm2-hotfixes';
 
     private const PATCH_EXTENSIONS = ['patch', 'diff'];
+
+    private const MONTHS = [
+        'jan' => '01', 'feb' => '02', 'mar' => '03', 'apr' => '04', 'may' => '05', 'jun' => '06',
+        'jul' => '07', 'aug' => '08', 'sep' => '09', 'oct' => '10', 'nov' => '11', 'dec' => '12',
+    ];
 
     /** What the code says about a patch file, as the evidence it amounts to. */
     private const CODE_EVIDENCE = [
@@ -157,7 +163,8 @@ class PatchEvidence
      * entry's description or reference — Adobe names both the patch files and
      * their composer descriptions after the patch (`VULN-39341_248-p3.patch`)
      * or the bulletin. Underscores are read as hyphens so `2026_jul` and
-     * `2026-jul` are the same id.
+     * `2026-jul` are the same id, and a monthly patch is also found by its
+     * numeric month: `2026-jul` matches `248p5-2026-07-001-CE.diff`.
      *
      * @param string[] $ids Patch and bulletin ids, e.g. ["VULN-39341", "APSB26-146"].
      * @return array{status: string, matches: array<int, array<string, mixed>>}
@@ -169,13 +176,26 @@ class PatchEvidence
             $ids
         )));
 
+        $months = [];
+        foreach ($needles as $needle) {
+            if (preg_match('/^(\d{4})-([a-z]{3})$/', $needle, $month) === 1 && isset(self::MONTHS[$month[2]])) {
+                $months[] = sprintf('/(?<![0-9])%s-%s(?![0-9])/', $month[1], self::MONTHS[$month[2]]);
+            }
+        }
+
         $matches = [];
         foreach ($this->collect()['entries'] as $entry) {
             $haystack = str_replace('_', '-', strtolower($entry['description'] . ' ' . $entry['reference']));
             foreach ($needles as $needle) {
                 if (str_contains($haystack, $needle)) {
                     $matches[] = $entry;
-                    break;
+                    continue 2;
+                }
+            }
+            foreach ($months as $pattern) {
+                if (preg_match($pattern, $haystack) === 1) {
+                    $matches[] = $entry;
+                    continue 2;
                 }
             }
         }
