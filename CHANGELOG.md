@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/magenxcommerce/module-platform/compare/v1.4.3...v1.5.0) (2026-10-16)
+
+
+### Features
+
+* Integrations tab - integration access token age ([#43](https://github.com/magenxcommerce/module-platform/issues/43)) ([736ce6f](https://github.com/magenxcommerce/module-platform/commit/736ce6f6f1f15334ea83d56098db0d8f9a9cc1b5))
+
 ## [1.4.3](https://github.com/magenxcommerce/module-platform/compare/v1.4.2...v1.4.3) (2026-10-13)
 
 
