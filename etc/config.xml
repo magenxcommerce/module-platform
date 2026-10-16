@@ -24,7 +24,7 @@
                     part of every deployment, and the multiselect is generated from the
                     collector pool, so the tab is offered without being switched on.
                 -->
-                <enabled_collectors>mariadb,redis,rabbitmq,opensearch,php,nginx,frankenphp,security,compatibility</enabled_collectors>
+                <enabled_collectors>mariadb,redis,rabbitmq,opensearch,php,nginx,frankenphp,security,compatibility,integrations</enabled_collectors>
             </collectors>
             <endpoints>
                 <nginx_status_url>http://nginx/nginx_status</nginx_status_url>

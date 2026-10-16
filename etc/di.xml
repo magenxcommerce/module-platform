@@ -24,6 +24,7 @@
                 <item name="frankenphp" xsi:type="object">Magenx\Platform\Model\Collector\FrankenPhp</item>
                 <item name="security" xsi:type="object">Magenx\Platform\Model\Collector\Security</item>
                 <item name="compatibility" xsi:type="object">Magenx\Platform\Model\Collector\Compatibility</item>
+                <item name="integrations" xsi:type="object">Magenx\Platform\Model\Collector\Integrations</item>
             </argument>
         </arguments>
     </type>
