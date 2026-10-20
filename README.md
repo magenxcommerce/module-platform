@@ -1,5 +1,9 @@
 # Magenx_Platform
 
+> **Built with AI assistance.** This module is built with significant use of Claude Code, under active human review and guidance. It is open source and in active development. AI assistance does not lower the engineering bar: every change must meet the same correctness, security, documentation and maintainability requirements as any other contribution.
+>
+> **No warranty.** We are not responsible for any incompatibility. By installing this software, you accept responsibility for its security, upgrades, patches and monitoring.
+
 A platform status dashboard inside the Magento admin.
 
 The MagenX stack runs Magento headless behind a private Docker network: MariaDB, Redis,
