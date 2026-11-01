@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/magenxcommerce/module-platform/compare/v1.5.0...v1.5.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* require PHP 8.4 or newer ([#45](https://github.com/magenxcommerce/module-platform/issues/45)) ([0508dc4](https://github.com/magenxcommerce/module-platform/commit/0508dc4af57633dd43f1f1d34cacc99ea335dd01))
+
 ## [1.5.0](https://github.com/magenxcommerce/module-platform/compare/v1.4.3...v1.5.0) (2026-10-16)
 
 
