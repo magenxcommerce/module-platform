@@ -299,13 +299,12 @@ imgproxy tab ships.
 
 ## Compatibility
 
-Targets **Magento 2.4.8 and up**, on **PHP 8.3 or 8.4**.
+Targets **Magento 2.4.8 and up**, on **PHP 8.4 or 8.5**.
 
-Magento 2.4.8 itself allows PHP 8.2 as well; this module deliberately does not. PHP 8.2 left
-active support in December 2024 and its security window closes at the end of 2026, so the
-floor is 8.3. Nothing in the code needs it — there is no PHP 8.3-only syntax anywhere — it is
-a support decision, not a technical one. A 2.4.8 site still on 8.2 will not resolve this
-package.
+Magento 2.4.8 itself allows PHP 8.2 and 8.3 as well; this module deliberately does not. PHP 8.2
+left active support in December 2024 and PHP 8.3 in December 2025, so the floor is 8.4. It is
+a support decision, not a technical one. A 2.4.8 site still on 8.2 or 8.3 will not resolve
+this package.
 
 Package constraints were checked against the real `magento/magento2` manifests at tag
 `2.4.8` rather than from memory: `magento/framework` `103.0.*`, `magento/module-backend`
